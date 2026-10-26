@@ -1,6 +1,7 @@
 // Template content: have a lawyer review before launch (consumer law, refunds and AI disclosures vary by jurisdiction).
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/legal-page";
+import { APP_DOMAIN } from "@/lib/config";
 
 export const metadata: Metadata = { title: "Terms of Service", alternates: { canonical: "/terms" } };
 
@@ -24,15 +25,24 @@ export default function Terms() {
 
       <h2>Credits and payments</h2>
       <ul>
-        <li>Glowie is prepaid. You buy credit packs through Stripe and spend credits on actions. The price is shown before each action.</li>
+        <li>Glowie is prepaid. There are no subscriptions and nothing renews. You buy credit packs through Stripe and spend credits on actions. The maximum price is shown before each action; you are charged actual cost, never more.</li>
+        <li>Credits never expire.</li>
         <li>Credits are added after your payment is confirmed. Failed generations are not charged.</li>
         <li>Credits have no cash value, are not transferable, and are non-refundable except where required by law.</li>
         <li>New accounts have purchase limits during their first week. If you turn on auto top-up, we will charge your saved card for the pack you chose when your balance runs low. You can turn it off any time.</li>
         <li>If you dispute a payment (chargeback), we may freeze your account, remove unused credits and block further purchases while it is reviewed.</li>
       </ul>
 
-      <h2>Referrals</h2>
-      <p>When someone you invite makes their first purchase, you both get $2 in credits. Self-referrals and abuse void the reward.</p>
+      <h2>Free trial, Glowup Party and referrals</h2>
+      <ul>
+        <li>The free trial (an analysis, looks and one preview) is limited to one per person, device and verified phone number.</li>
+        <li>Friends who vote in your Glowup Party and then sign up get one extra free preview with their trial.</li>
+        <li>When someone you invite makes their first purchase, you both get $2 in credits.</li>
+        <li>Self-referrals, fake accounts and other abuse void these rewards.</li>
+      </ul>
+
+      <h2>Sharing</h2>
+      <p>Stylist cards, roast cards and party pages are public to anyone with the link until you turn the link off. Only share links with people you trust.</p>
 
       <h2>Acceptable use</h2>
       <p>Don&apos;t misuse Glowie: no attempts to bypass safety checks, rate limits or payments, no automated scraping, and no using outputs to harass, impersonate or deceive anyone.</p>
@@ -47,7 +57,7 @@ export default function Terms() {
       <p>Glowie is provided &quot;as is&quot;. To the extent permitted by law, we are not liable for indirect or consequential losses, and our total liability is limited to the amount you paid us in the 12 months before the claim.</p>
 
       <h2>Contact</h2>
-      <p>Questions? Email hello@glowupai.app.</p>
+      <p>Questions? Email hello@{APP_DOMAIN}.</p>
     </LegalPage>
   );
 }

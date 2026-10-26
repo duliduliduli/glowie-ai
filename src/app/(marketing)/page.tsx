@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Camera, Palette, Sparkles } from "lucide-react";
+import { CalendarHeart, Camera, Clapperboard, Flame, Images, Palette, PartyPopper, Scissors, ShoppingBag, Sparkles, Timer, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BeforeAfterSlider } from "@/components/before-after";
-import { PACKS, VIBES } from "@/lib/config";
+import { PACKS, TAGLINE, VIBES } from "@/lib/config";
 
 export const metadata: Metadata = {
-  title: "Glowie: AI stylist for outfits, hair & makeup",
+  title: "Glowie: try the look before you book it",
   description:
-    "Upload a selfie, pick a vibe, and preview yourself in personalised outfits, hairstyles and makeup. Seasonal colour analysis, face-shape tips and shoppable looks. Try one analysis free.",
+    "See new hair, makeup and outfits on your own photo before the salon. No subscription, ever: credits never expire and a full glowup costs about $1. Try it free.",
   alternates: { canonical: "/" },
 };
 
@@ -28,20 +28,45 @@ ${hairUp ? `<path d="M122 190 Q130 120 200 118 Q270 120 278 190 Q240 150 200 152
 
 const EXAMPLES = [
   { vibe: "Old Money", before: portrait("#e9ebee", "#5a4636", "#9aa0a8", "#c98f86"), after: portrait("#efe6da", "#6b4e37", "#1f2a44", "#b0605e", true) },
-  { vibe: "Soft Glam", before: portrait("#e9ebee", "#2d2420", "#c4c7cc", "#c99a90"), after: portrait("#f6e4e4", "#3a2a22", "#d9a7a9", "#c46a72") },
+  { vibe: "Date Night", before: portrait("#e9ebee", "#2d2420", "#c4c7cc", "#c99a90"), after: portrait("#f6e4e4", "#3a2a22", "#d9a7a9", "#c46a72") },
+];
+
+const PROOF = [
+  { big: "$0/mo", small: "No subscription, ever" },
+  { big: "Forever", small: "Credits never expire" },
+  { big: "~$1", small: "A full glowup. Less than one week of the other apps." },
 ];
 
 const STEPS = [
-  { icon: Camera, title: "Snap a selfie", body: "Take a quick photo or upload one. Add a full-body shot for outfits." },
-  { icon: Palette, title: "Find your colours", body: "Face shape, undertone, hair type and your seasonal palette in seconds." },
-  { icon: Sparkles, title: "See your new look", body: "3 complete looks per vibe, with AI previews of you, routines and shopping links." },
+  { icon: Camera, title: "Selfie coach", body: "We score your lighting, angle and framing before you spend a cent, so previews come out right." },
+  { icon: Palette, title: "Your analysis", body: "Face shape, undertone, seasonal colour palette and hair type." },
+  { icon: Wand2, title: "Looks on you", body: "3 complete looks per vibe: hair, makeup and outfit, previewed on your own photo." },
+];
+
+const FEATURES = [
+  { icon: Camera, title: "Selfie coach", body: "A photo score with quick tips, before any credits are used." },
+  { icon: Palette, title: "Colour analysis", body: "Your season, best colours, neutrals and what to skip." },
+  { icon: Images, title: "3 looks on you", body: "Before/after slider for every look, on your real photo." },
+  { icon: Timer, title: "Hair regret simulator", body: "See it at week 1, month 3 and month 6, plus yearly upkeep cost and salon time." },
+  { icon: Scissors, title: "Stylist handoff card", body: "Salon-ready level, tone, technique and cut, with the reference on your own face." },
+  { icon: Flame, title: "Roast my fit", body: "An honest score and quick fixes for any outfit. Shareable, if you dare." },
+  { icon: ShoppingBag, title: "Shop the look", body: "The same look at about $50, $200 or $800." },
+  { icon: PartyPopper, title: "Glowup Party", body: "Send two looks to friends. They vote, no account needed." },
+  { icon: CalendarHeart, title: "Event mode", body: "\"Get me ready for Saturday\": weather, dress code, full look and a packing list." },
+  { icon: Sparkles, title: "Story cards", body: "Auto 9:16 before/after images for Instagram and TikTok." },
+  { icon: Clapperboard, title: "Animated look", body: "A 3-second video of your new look, for up to 5 credits." },
 ];
 
 const FAQ = [
-  { q: "How much does it cost?", a: "Glowie is pay-as-you-go. Buy a credit pack, no subscription. An analysis is about 1 credit, a set of 3 looks about 2 credits, and each AI preview image about 2 credits. You always see the price before you tap." },
-  { q: "Is there a free trial?", a: "Yes. Every new account gets one free analysis with looks for one vibe. Preview images need credits." },
-  { q: "What happens to my photos?", a: "They're stored privately and only shown to you through short-lived signed links. Originals are deleted automatically after 30 days, or immediately if you choose. They are never used to train AI models." },
+  { q: "Is there a subscription?", a: "Never. You buy a credit pack when you want one, starting at $2.99. Nothing renews." },
+  { q: "Do credits expire?", a: "No. Credits stay on your account until you use them." },
+  { q: "How much does a glowup cost?", a: "A full session (analysis, 3 looks and 3 previews of you) is usually about $1. An extra preview is about $0.35, and an animated video is up to $0.50. You always see the maximum price before you tap, and you're charged actual cost, often less." },
+  { q: "What if a generation fails?", a: "You're not charged. Credits are only held while the AI works and are released in full if anything fails." },
+  { q: "Is there a free trial?", a: "Yes: a free analysis, 3 looks and 1 real preview of you. Voting in a friend's Glowup Party gets you 1 more free preview." },
+  { q: "Why do you ask for my phone number?", a: "Only to keep the free trial to one per person. We never use it for marketing." },
+  { q: "What happens to my photos?", a: "They're private and only shown to you through links that expire. Originals are deleted after 30 days, or immediately if you choose. They are never used to train AI. Anything you share (a stylist card, a roast, a party) shows only what you picked, and you can turn the link off any time." },
   { q: "Will the preview still look like me?", a: "That's the point. Glowie only edits your own photo and keeps your face, skin tone and features. We never change race or identity, or create celebrity lookalikes." },
+  { q: "Can I get a refund?", a: "Unused credits aren't refundable except where the law requires it. Failed generations are never charged." },
   { q: "Is this professional advice?", a: "No. Glowie gives AI style suggestions for fun and inspiration, not professional, medical or dermatological advice." },
   { q: "Who can use Glowie?", a: "Adults 18 and over. Photos of children or of other people are not allowed." },
 ];
@@ -59,10 +84,10 @@ export default function Landing() {
 
       <section className="grid items-center gap-10 py-8 md:grid-cols-2 md:py-16">
         <div>
-          <p className="inline-flex rounded-full bg-accent-soft px-3 py-1 text-sm font-semibold text-accent">Your AI stylist</p>
-          <h1 className="heading mt-4 text-5xl leading-[0.95] md:text-7xl">See your glow-up before you try it.</h1>
+          <p className="inline-flex rounded-full bg-accent-soft px-3 py-1 text-sm font-semibold text-accent">No subscription, ever</p>
+          <h1 className="heading mt-4 text-5xl leading-[0.95] md:text-7xl">{TAGLINE.split(". ")[0]}.</h1>
           <p className="mt-5 max-w-md text-lg text-muted-foreground">
-            Upload a selfie, pick a vibe, and get outfits, hair and makeup made for your colours and face shape, with AI previews of the new you.
+            See new hair, makeup and outfits on your own photo before the salon or the checkout. {TAGLINE.split(". ")[1]}
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <Button asChild size="lg">
@@ -72,7 +97,7 @@ export default function Landing() {
               <Link href="/home">Open app</Link>
             </Button>
           </div>
-          <p className="mt-3 text-sm text-muted-foreground">1 free analysis on signup. No subscription.</p>
+          <p className="mt-3 text-sm text-muted-foreground">Free analysis + 1 free preview of you on signup.</p>
         </div>
         <div className="grid grid-cols-2 gap-3">
           {EXAMPLES.map((e) => (
@@ -83,6 +108,15 @@ export default function Landing() {
           ))}
           <p className="col-span-2 text-center text-xs text-muted-foreground">Illustrated examples. Your previews are AI edits of your own photo.</p>
         </div>
+      </section>
+
+      <section aria-label="Why Glowie" className="grid gap-3 sm:grid-cols-3">
+        {PROOF.map((p) => (
+          <div key={p.big} className="rounded-[28px] bg-card p-6 shadow-sm">
+            <p className="text-4xl font-extrabold">{p.big}</p>
+            <p className="mt-1 text-muted-foreground">{p.small}</p>
+          </div>
+        ))}
       </section>
 
       <section className="py-10" aria-labelledby="how">
@@ -103,6 +137,23 @@ export default function Landing() {
         </ol>
       </section>
 
+      <section className="py-10" aria-labelledby="features">
+        <h2 id="features" className="heading text-3xl">Everything in one glowup</h2>
+        <ul className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {FEATURES.map((f) => (
+            <li key={f.title} className="flex gap-4 rounded-[24px] bg-card p-5 shadow-sm">
+              <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-accent-soft text-accent">
+                <f.icon className="size-5" aria-hidden />
+              </span>
+              <div>
+                <h3 className="font-bold">{f.title}</h3>
+                <p className="text-sm text-muted-foreground">{f.body}</p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <section className="py-10" aria-labelledby="vibes">
         <h2 id="vibes" className="heading text-3xl">Pick your vibe</h2>
         <ul className="mt-6 flex flex-wrap gap-2">
@@ -111,13 +162,14 @@ export default function Landing() {
               {v.id === "custom" ? "Or describe your own" : v.label}
             </li>
           ))}
+          <li className="rounded-full bg-primary px-4 py-2.5 font-semibold text-primary-foreground">Event mode</li>
         </ul>
       </section>
 
       <section className="py-10" aria-labelledby="pricing">
-        <h2 id="pricing" className="heading text-3xl">Simple pricing</h2>
+        <h2 id="pricing" className="heading text-3xl">No subscription, ever</h2>
         <p className="mt-2 text-muted-foreground">
-          Pay as you go. Analysis ~1 credit, looks ~2 credits, each preview image ~2 credits. You only pay for what works: failed generations are never charged.
+          Buy credits when you want them. Credits never expire. A full session is about $1, an extra preview about $0.35, an animated video up to $0.50. Failed generations are never charged.
         </p>
         <div className="mt-6 grid gap-4 md:grid-cols-3">
           {PACKS.map((p) => (
@@ -128,12 +180,12 @@ export default function Landing() {
               </div>
               <p className="mt-3 text-4xl font-extrabold">${(p.usdCents / 100).toFixed(2)}</p>
               <p className="mt-1 opacity-70">
-                {p.credits} credits · ${(p.usdCents / 100 / p.credits).toFixed(3)} per credit
+                {p.credits} credits · ${(p.usdCents / 100 / p.credits).toFixed(3)} per credit · never expire
               </p>
             </div>
           ))}
         </div>
-        <p className="mt-4 text-sm font-semibold">1 free analysis on signup.</p>
+        <p className="mt-4 text-sm font-semibold">Free trial: an analysis, 3 looks and 1 real preview of you.</p>
       </section>
 
       <section className="py-10" aria-labelledby="faq">
@@ -154,10 +206,10 @@ export default function Landing() {
       </section>
 
       <section className="my-10 rounded-[28px] bg-primary p-8 text-center text-primary-foreground md:p-12">
-        <h2 className="heading text-3xl md:text-4xl">Ready to glow?</h2>
-        <p className="mt-2 opacity-70">Your first analysis is on us.</p>
+        <h2 className="heading text-3xl md:text-4xl">Try the look before you book it</h2>
+        <p className="mt-2 opacity-70">Your first analysis and preview are on us. AI suggestions, not professional advice.</p>
         <Button asChild size="lg" variant="white" className="mt-6">
-          <Link href="/sign-up">Get started</Link>
+          <Link href="/sign-up">Get started free</Link>
         </Button>
       </section>
     </main>
