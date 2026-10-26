@@ -39,3 +39,13 @@ export function RetryButton({ sessionId }: { sessionId: string }) {
     </Button>
   );
 }
+
+/** Quiet refresh while background jobs (hair try-on, video) run. */
+export function AutoRefresh() {
+  const router = useRouter();
+  useEffect(() => {
+    const t = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(t);
+  }, [router]);
+  return null;
+}

@@ -1,17 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, CloudSun, Luggage } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { stale } from "@/lib/flows";
 import { db } from "@/lib/db";
 import { signedUrl } from "@/lib/storage";
 import { estimateCredits } from "@/lib/openrouter";
-import { vibeLabel } from "@/lib/config";
-import { LookSchema, type Analysis } from "@/lib/ai";
+import { VIDEO, vibeLabel } from "@/lib/config";
+import { LookSchema, type Analysis, type EventPlan } from "@/lib/ai";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Disclaimer } from "@/components/disclaimer";
 import { LookCard } from "./look-card";
-import { Poller, RetryButton } from "./status";
+import { PartyCard } from "./party-card";
+import { AutoRefresh, Poller, RetryButton } from "./status";
 
 export const metadata = { title: "Your looks" };
 
@@ -20,18 +22,27 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
   const { id } = await params;
   const s = await db.styleSession.findFirst({ where: { id, userId: user.id }, include: { looks: { orderBy: { index: "asc" } } } });
   if (!s) notFound();
-  const photos = await db.photo.findMany({ where: { id: { in: [s.selfieId, s.fullBodyId].filter(Boolean) as string[] }, deletedAt: null } });
+  const [photos, image, parties] = await Promise.all([
+    db.photo.findMany({ where: { id: { in: [s.selfieId, s.fullBodyId].filter(Boolean) as string[] }, deletedAt: null } }),
+    estimateCredits("image"),
+    db.party.findMany({ where: { userId: user.id, revokedAt: null, lookAId: { in: s.looks.map((l) => l.id) } }, include: { votes: { select: { choice: true } } } }),
+  ]);
   const selfie = photos.find((p) => p.id === s.selfieId);
   const base = photos.find((p) => p.id === (s.fullBodyId ?? s.selfieId));
   const analysis = s.analysis as Analysis | null;
-  const imagePrice = await estimateCredits("image");
+  const plan = s.extra as (EventPlan & { event: { description: string; date: string; location: string } }) | null;
+  const live = (d: Date) => d > stale();
+  const previewing = s.status === "previewing" && live(s.createdAt);
+  const busy = previewing || s.looks.some((l) => live(l.updatedAt) && (l.hairStatus === "generating" || l.videoStatus === "generating"));
+  const previewBlocked = !base ? "Your original photo was deleted, so new previews aren't possible." : !selfie?.fromCamera ? "Previews need a live camera selfie. Start a new look with the camera." : null;
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
 
   return (
     <div className="space-y-6">
       <section className="relative -mx-4 overflow-hidden rounded-b-[36px] bg-muted">
         {selfie ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={signedUrl(selfie.id)} alt="Your selfie" className="aspect-[4/4] w-full object-cover" />
+          <img src={signedUrl(selfie.id)} alt="Your selfie" className="aspect-square w-full object-cover" />
         ) : (
           <div className="aspect-[4/3] bg-gradient-to-br from-accent-soft to-secondary" />
         )}
@@ -41,7 +52,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white/85 to-transparent px-5 pb-5 pt-16">
           <p className="text-sm font-semibold text-accent">{vibeLabel(s.vibe)}</p>
           <h1 className="heading text-2xl">{analysis ? analysis.season : "Your colours"}</h1>
-          {analysis ? <p className="text-sm text-muted-foreground">{analysis.undertone} undertone · {analysis.faceShape} face · {analysis.metals} metals</p> : null}
+          {analysis ? <p className="text-sm text-muted-foreground">{analysis.undertone} undertone · {analysis.faceShape} face · {analysis.hairType} hair</p> : null}
         </div>
       </section>
 
@@ -54,6 +65,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           </div>
         </>
       ) : null}
+      {busy ? <AutoRefresh /> : null}
 
       {s.status === "failed" ? (
         <div className="space-y-3 rounded-[28px] bg-card p-5 shadow-sm">
@@ -61,6 +73,23 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           <p className="text-sm text-muted-foreground">The stylist hit a snag. You weren&apos;t charged for anything that failed.</p>
           <RetryButton sessionId={s.id} />
         </div>
+      ) : null}
+
+      {plan?.dressCode ? (
+        <section className="space-y-3 rounded-[28px] bg-card p-5 shadow-sm">
+          <h2 className="heading text-lg">Your event plan</h2>
+          <p className="text-sm text-muted-foreground">{plan.event.description} · {plan.event.date} · {plan.event.location}</p>
+          <p className="text-sm"><span className="font-semibold">Dress code: </span>{plan.dressCode}</p>
+          <p className="flex gap-2 text-sm"><CloudSun className="size-5 shrink-0 text-accent" aria-hidden />{plan.weatherNote}</p>
+          <div className="rounded-2xl bg-background p-4">
+            <p className="flex items-center gap-2 pb-2 font-semibold"><Luggage className="size-4" aria-hidden /> Packing list</p>
+            <ul className="space-y-1.5 text-sm">
+              {plan.packingList.map((p) => (
+                <li key={p}><label className="flex min-h-8 items-center gap-2"><input type="checkbox" className="size-4 accent-[var(--primary)]" /> {p}</label></li>
+              ))}
+            </ul>
+          </div>
+        </section>
       ) : null}
 
       {analysis ? (
@@ -82,9 +111,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           </div>
           {analysis.highlights.length ? (
             <ul className="flex flex-wrap gap-2">
-              {analysis.highlights.map((h) => (
-                <li key={h} className="rounded-full bg-accent-soft px-3 py-1.5 text-sm">{h}</li>
-              ))}
+              {analysis.highlights.map((h) => <li key={h} className="rounded-full bg-accent-soft px-3 py-1.5 text-sm">{h}</li>)}
             </ul>
           ) : null}
         </section>
@@ -96,13 +123,26 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           id={l.id}
           look={LookSchema.parse(l.data)}
           before={base ? signedUrl(base.id) : null}
+          selfie={selfie ? signedUrl(selfie.id) : null}
           preview={l.previewId ? signedUrl(l.previewId) : null}
           favorite={l.favorite}
-          imagePrice={imagePrice}
-          previewBlocked={!base ? "Your original photo was deleted, so new previews aren't possible." : !selfie?.fromCamera ? "Previews need a live camera selfie. Start a new look with the camera." : null}
+          hair={{ status: l.hairStatus === "generating" && !live(l.updatedAt) ? "failed" : l.hairStatus, stages: ((l.hairStages as { label: string; photoId: string }[] | null) ?? []).map((st) => ({ label: st.label, url: signedUrl(st.photoId) })) }}
+          video={{ status: l.videoStatus === "generating" && !live(l.updatedAt) ? "failed" : l.videoStatus, url: l.videoId ? signedUrl(l.videoId) : null }}
+          prices={{ image, hair: image * 3, video: VIDEO.credits }}
+          freePreviews={user.freePreviews}
+          previewBlocked={previewBlocked}
+          autoPreviewing={previewing && !l.previewId}
+          defaultBudget={(s.extra as { event?: { budgetUsd: number } } | null)?.event?.budgetUsd}
         />
       ))}
-      {s.status === "ready" ? <Disclaimer /> : null}
+
+      {s.status !== "analyzing" && s.looks.length > 1 ? (
+        <PartyCard
+          looks={s.looks.filter((l) => l.previewId).map((l) => ({ id: l.id, title: LookSchema.parse(l.data).title, image: signedUrl(l.previewId!) }))}
+          parties={parties.map((p) => ({ id: p.id, url: `${appUrl}/p/${p.token}`, tally: [0, 1].map((c) => p.votes.filter((v) => v.choice === c).length), titles: [p.lookAId, p.lookBId].map((lid) => LookSchema.parse(s.looks.find((l) => l.id === lid)!.data).title) }))}
+        />
+      ) : null}
+      {s.looks.length ? <Disclaimer /> : null}
     </div>
   );
 }
