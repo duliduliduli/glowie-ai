@@ -4,20 +4,29 @@ import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { ChevronLeft, ImageUp, Loader2, ShieldCheck } from "lucide-react";
+import { CalendarHeart, ChevronLeft, ImageUp, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Camera } from "@/components/camera";
 import { Turnstile } from "@/components/turnstile";
-import { VIBES } from "@/lib/config";
+import { PhoneVerify } from "@/components/phone-verify";
+import { CoachCard, type Coach } from "@/components/coach-card";
+import { EVENT_VIBE, VIBES, vibeLabel } from "@/lib/config";
 import { cn } from "@/lib/utils";
 
-type Photo = { id: string; url: string; fromCamera: boolean };
+type Photo = { id: string; url: string; fromCamera: boolean; coach: Coach };
+class UploadError extends Error {
+  constructor(message: string, public coach?: Coach) {
+    super(message);
+  }
+}
 type Props = {
   initialVibe: string | null;
   prices: { analysis: number; looks: number; image: number };
   balance: number;
+  freePreviews: number;
   trial: boolean;
+  phoneVerified: boolean;
   turnstileSiteKey: string | null;
 };
 
@@ -33,7 +42,7 @@ async function upload(blob: Blob, kind: "selfie" | "fullbody", fromCamera: boole
   form.set("fromCamera", fromCamera ? "1" : "0");
   const res = await fetch("/api/photos", { method: "POST", body: form });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? "Upload failed");
+  if (!res.ok) throw new UploadError(data.error ?? "Upload failed", data.coach);
   return data;
 }
 
@@ -50,7 +59,7 @@ function Chip({ on, children, onClick }: { on: boolean; children: React.ReactNod
   );
 }
 
-export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSiteKey }: Props) {
+export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial, phoneVerified, turnstileSiteKey }: Props) {
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -63,21 +72,32 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
   const [budget, setBudget] = useState("Mid-range");
   const [highlight, setHighlight] = useState<string[]>([]);
   const [token, setToken] = useState<string | null>(null);
+  const [retake, setRetake] = useState<Coach | null>(null);
+  const [phoneOk, setPhoneOk] = useState(phoneVerified);
+  const [event, setEvent] = useState({ description: "", date: "", location: "", budgetUsd: 200 });
   const fileSelfie = useRef<HTMLInputElement>(null);
   const fileBody = useRef<HTMLInputElement>(null);
 
-  const cost = prices.analysis + prices.looks;
-  const enough = balance >= cost;
+  const isEvent = vibe === EVENT_VIBE;
+  const previews = selfie?.fromCamera ? (isEvent ? 1 : 3) : 0;
+  const text = prices.analysis + prices.looks;
+  const freeUsed = Math.min(previews, freePreviews + (trial ? 1 : 0));
+  const cost = (trial ? 0 : text) + (previews - freeUsed) * prices.image;
+  const enough = trial || balance >= text;
   const onCameraError = useCallback((r: string) => setCameraError(r), []);
 
   const doUpload = async (blob: Blob, kind: "selfie" | "fullbody", fromCamera: boolean) => {
     setBusy(kind === "selfie" ? "Checking your photo..." : "Checking it's you...");
     try {
       const p = await upload(blob, kind, fromCamera);
+      setRetake(null);
       if (kind === "selfie") setSelfie(p);
-      else setFullBody(p);
-      setStep((s) => s + 1);
+      else {
+        setFullBody(p);
+        setStep((s) => s + 1);
+      }
     } catch (e) {
+      if (e instanceof UploadError && e.coach) setRetake(e.coach);
       toast.error((e as Error).message);
     } finally {
       setBusy(null);
@@ -95,12 +115,14 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
           fullBodyId: fullBody?.id,
           vibe,
           customPrompt: vibe === "custom" ? customPrompt : null,
+          event: isEvent ? event : null,
           quiz: { occasion, budget, highlight },
           useTrial: trial,
           turnstileToken: token,
         }),
       });
       const data = await res.json();
+      if (data.code === "phone_required") setPhoneOk(false);
       if (!res.ok) throw new Error(data.error);
       router.push(`/session/${data.id}`);
     } catch (e) {
@@ -109,7 +131,8 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
     }
   };
 
-  const canNext = [!!selfie, true, !!vibe && (vibe !== "custom" || customPrompt.trim().length > 2), true][step];
+  const eventOk = event.description.trim().length > 2 && !!event.date && event.location.trim().length > 1;
+  const canNext = [!!selfie, true, !!vibe && (vibe !== "custom" || customPrompt.trim().length > 2) && (!isEvent || eventOk), true][step];
 
   return (
     <MotionConfig reducedMotion="user">
@@ -143,9 +166,18 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
                 <p className="font-semibold">{busy}</p>
               </div>
             </div>
+          ) : step === 0 && selfie ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={selfie.url} alt="Your selfie" className="aspect-[4/5] w-full rounded-[28px] object-cover" />
+              <CoachCard coach={selfie.coach} />
+              <Button size="lg" className="w-full" onClick={() => setStep(1)}>Looks good, continue</Button>
+              <Button size="lg" variant="ghost" className="w-full" onClick={() => setSelfie(null)}>Retake</Button>
+            </>
           ) : step === 0 ? (
             <>
-              <p className="text-sm text-muted-foreground">Face the light, no sunglasses, just you in the frame. A live selfie lets us make AI previews of you.</p>
+              {retake ? <CoachCard coach={retake} /> : null}
+              {!retake ? <p className="text-sm text-muted-foreground">Face a window, no sunglasses, just you in the frame. Our selfie coach checks it before you spend anything.</p> : null}
               {cameraError ? (
                 <p className="rounded-2xl bg-accent-soft p-4 text-sm">{cameraError}</p>
               ) : (
@@ -191,6 +223,36 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                aria-pressed={isEvent}
+                onClick={() => setVibe(EVENT_VIBE)}
+                className={cn("flex min-h-16 w-full items-center gap-3 rounded-[20px] px-4 text-left shadow-sm", isEvent ? "bg-primary text-primary-foreground" : "bg-card")}
+              >
+                <CalendarHeart className="size-6 shrink-0" aria-hidden />
+                <span>
+                  <span className="block font-semibold">Event mode</span>
+                  <span className={cn("text-xs", isEvent ? "text-white/70" : "text-muted-foreground")}>&quot;Get me ready for Saturday&quot;: weather, dress code, packing list</span>
+                </span>
+              </button>
+              {isEvent ? (
+                <div className="space-y-3 rounded-[24px] bg-card p-4 shadow-sm">
+                  <Field label="What's the event?">
+                    <textarea rows={2} maxLength={300} value={event.description} onChange={(e) => setEvent({ ...event, description: e.target.value })} placeholder="e.g. friend's rooftop birthday dinner" className="w-full rounded-2xl border bg-background p-3 text-base outline-none" />
+                  </Field>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Date">
+                      <input type="date" value={event.date} onChange={(e) => setEvent({ ...event, date: e.target.value })} className="min-h-11 w-full rounded-2xl border bg-background px-3 text-base" />
+                    </Field>
+                    <Field label="Where (city)">
+                      <input value={event.location} maxLength={100} onChange={(e) => setEvent({ ...event, location: e.target.value })} placeholder="Austin, TX" className="min-h-11 w-full rounded-2xl border bg-background px-3 text-base" />
+                    </Field>
+                  </div>
+                  <Field label={`Outfit budget: about $${event.budgetUsd}`}>
+                    <input type="range" min={50} max={800} step={50} value={event.budgetUsd} onChange={(e) => setEvent({ ...event, budgetUsd: Number(e.target.value) })} className="h-11 w-full accent-[var(--primary)]" />
+                  </Field>
+                </div>
+              ) : null}
               {vibe === "custom" ? (
                 <label className="block space-y-2">
                   <span className="text-sm font-medium">Describe your vibe</span>
@@ -232,7 +294,7 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={selfie!.url} alt="Your selfie" className="aspect-[4/5] w-24 rounded-2xl object-cover" />
                 <div className="space-y-1 text-sm">
-                  <p className="font-bold">{VIBES.find((v) => v.id === vibe)?.label}</p>
+                  <p className="font-bold">{vibe ? vibeLabel(vibe) : ""}</p>
                   <p className="text-muted-foreground">{occasion} · {budget}</p>
                   {highlight.length ? <p className="text-muted-foreground">Highlight: {highlight.join(", ")}</p> : null}
                   {fullBody ? <p className="text-muted-foreground">+ full-body photo</p> : null}
@@ -241,16 +303,25 @@ export function NewLookFlow({ initialVibe, prices, balance, trial, turnstileSite
               <div className="space-y-2 rounded-[28px] bg-card p-5 shadow-sm">
                 <h2 className="font-bold">Price</h2>
                 <Row label="Colour & face analysis" value={trial ? "Free" : `up to ${prices.analysis} cr`} />
-                <Row label="3 complete looks" value={trial ? "Free" : `up to ${prices.looks} cr`} />
-                <Row label="Each AI preview image (later, optional)" value={`up to ${prices.image} cr`} />
-                <p className="pt-2 text-xs text-muted-foreground">
-                  {trial ? "Your first analysis is on us." : `You're charged actual cost, never more than shown. Balance: ${balance} credits. Failed generations are never charged.`}
+                <Row label={isEvent ? "Event look + packing list" : "3 complete looks"} value={trial ? "Free" : `up to ${prices.looks} cr`} />
+                {previews ? (
+                  <Row label={`${previews} AI preview${previews > 1 ? "s" : ""} of you`} value={`${freeUsed ? `${freeUsed} free` : ""}${freeUsed && previews - freeUsed ? " + " : ""}${previews - freeUsed ? `up to ${(previews - freeUsed) * prices.image} cr` : ""}`} />
+                ) : (
+                  <Row label="AI previews" value="need a live selfie" />
+                )}
+                <div className="flex justify-between border-t pt-2 text-sm font-bold">
+                  <span>Total</span>
+                  <span className="tabular-nums">{cost ? `up to ${cost} credits (~$${(cost * 0.1).toFixed(2)})` : "Free"}</span>
+                </div>
+                <p className="pt-1 text-xs text-muted-foreground">
+                  You&apos;re charged actual cost, never more than shown. Failed generations are free. Previews you can&apos;t cover are skipped, not charged. Balance: {balance} credits.
                 </p>
               </div>
-              {trial && turnstileSiteKey ? <Turnstile siteKey={turnstileSiteKey} onToken={setToken} /> : null}
-              {trial || enough ? (
-                <Button size="lg" className="w-full" onClick={start} disabled={trial && !!turnstileSiteKey && !token}>
-                  {trial ? "Analyse me, free" : `Analyse me · up to ${cost} credits`}
+              {trial && !phoneOk ? <PhoneVerify onVerified={() => setPhoneOk(true)} /> : null}
+              {trial && phoneOk && turnstileSiteKey ? <Turnstile siteKey={turnstileSiteKey} onToken={setToken} /> : null}
+              {enough ? (
+                <Button size="lg" className="w-full" onClick={start} disabled={trial && (!phoneOk || (!!turnstileSiteKey && !token))}>
+                  {trial ? "Start my free glowup" : `Start · up to ${cost} credits`}
                 </Button>
               ) : (
                 <Button size="lg" className="w-full" asChild>
@@ -279,5 +350,14 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold tabular-nums">{value}</span>
     </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block space-y-1">
+      <span className="text-sm font-medium">{label}</span>
+      {children}
+    </label>
   );
 }

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, Briefcase, Crown, Heart, Sparkles } from "lucide-react";
+import { ArrowUpRight, CalendarHeart, Crown, Flame, Gem, Heart, Sparkles } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBalance } from "@/lib/ledger";
@@ -15,10 +15,12 @@ import { cn } from "@/lib/utils";
 export const metadata = { title: "Home" };
 
 const QUICK = [
-  { id: "clean-girl", icon: Sparkles, note: "Effortless, glowy, polished" },
-  { id: "old-money", icon: Crown, note: "Quiet luxury, timeless" },
-  { id: "date-night", icon: Heart, note: "Romantic and confident" },
-  { id: "office-chic", icon: Briefcase, note: "Sharp, modern, easy" },
+  { href: "/new?vibe=date-night", label: "Date Night", icon: Heart, note: "Romantic and confident" },
+  { href: "/new?vibe=wedding-guest", label: "Wedding Guest", icon: Gem, note: "Polished, never upstaging" },
+  { href: "/new?vibe=clean-girl", label: "Clean Girl", icon: Sparkles, note: "Effortless and glowy" },
+  { href: "/new?vibe=old-money", label: "Old Money", icon: Crown, note: "Quiet luxury" },
+  { href: "/new?vibe=event", label: "Event mode", icon: CalendarHeart, note: "Get me ready for Saturday" },
+  { href: "/roast", label: "Roast my fit", icon: Flame, note: "Honest score + fixes" },
 ];
 
 export default async function HomePage() {
@@ -52,7 +54,7 @@ export default async function HomePage() {
         <div className="relative flex items-end justify-between gap-3">
           <div>
             <h1 className="heading text-2xl">Ready to glow</h1>
-            <p className="text-sm text-muted-foreground">{trial ? "Your first analysis is free." : "Selfie, vibe, three looks."}</p>
+            <p className="text-sm text-muted-foreground">{trial ? "Free analysis + a free preview of you." : user.freePreviews ? `${user.freePreviews} free preview${user.freePreviews > 1 ? "s" : ""} waiting.` : "Try the look before you book it."}</p>
           </div>
           <Button asChild size="lg">
             <Link href="/new">Start a look</Link>
@@ -79,21 +81,21 @@ export default async function HomePage() {
 
       <section>
         <div className="flex items-baseline justify-between pb-3">
-          <h2 className="heading text-lg">Quick vibes</h2>
+          <h2 className="heading text-lg">Quick starts</h2>
           <span className="text-sm text-muted-foreground">One tap</span>
         </div>
         <div className="grid grid-cols-2 gap-3">
           {QUICK.map((q, i) => (
             <Link
-              key={q.id}
-              href={`/new?vibe=${q.id}`}
+              key={q.href}
+              href={q.href}
               className={cn("flex min-h-36 flex-col justify-between rounded-[24px] p-4 shadow-sm transition active:scale-[0.98]", i === 0 ? "bg-primary text-primary-foreground" : "bg-card")}
             >
               <div className="flex items-center gap-3">
                 <span className={cn("grid size-11 place-items-center rounded-2xl", i === 0 ? "bg-white/10" : "bg-background")}>
                   <q.icon className="size-5" aria-hidden />
                 </span>
-                <span className="font-bold leading-tight">{vibeLabel(q.id)}</span>
+                <span className="font-bold leading-tight">{q.label}</span>
               </div>
               <div className="flex items-center justify-between gap-2">
                 <span className={cn("truncate text-xs", i === 0 ? "text-white/70" : "text-muted-foreground")}>{q.note}</span>

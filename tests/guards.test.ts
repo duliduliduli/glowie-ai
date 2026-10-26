@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { assertSafePrompt } from "@/lib/guards";
 import { signedUrl, verifySignature } from "@/lib/storage";
 import { parseJson, estimateCredits } from "@/lib/openrouter";
-import { shopLinks } from "@/lib/shop";
+import { pieceBudget, shopLinks } from "@/lib/shop";
+import { coachScore } from "@/lib/ai";
 import { LooksSchema } from "@/lib/ai";
 
 describe("custom prompt safety", () => {
@@ -42,8 +43,8 @@ describe("pricing", () => {
     const prices = {
       "google/gemini-4-argon": [2e-6, 1e-5, 2e-6, 0],
       "openai/gpt-5.4-mini": [7.5e-7, 4.5e-6, 0, 0],
-      "google/gemini-nano-banana-2.1": [1.5e-6, 7.5e-6, 0, 3e-5],
-      "google/gemini-2.5-flash-image": [3e-7, 2.5e-6, 3e-7, 3e-5],
+      "google/gemini-3.1-flash-image": [5e-7, 3e-6, 0, 6e-5],
+      "bytedance-seed/seedream-5-0-flash": [0, 0, 0, 4.31e-6],
     };
     for (const [model, [p, c, i, o]] of Object.entries(prices)) {
       const data = { promptUsd: p, completionUsd: c, imageInputUsd: i, imageOutputUsd: o };
@@ -51,15 +52,35 @@ describe("pricing", () => {
     }
     // Worst case across primary + fallback, x3 markup, +25% buffer.
     expect(await estimateCredits("analysis")).toBe(1);
-    expect(await estimateCredits("looks")).toBe(2);
-    expect(await estimateCredits("image")).toBe(2);
+    expect(await estimateCredits("looks")).toBe(3);
+    expect(await estimateCredits("roast")).toBe(1);
+    // Nano Banana 2 (~$0.08/image) sets the hold; actual charge is usually 3.
+    expect(await estimateCredits("image")).toBe(4);
   });
 });
 
 describe("shop links", () => {
   it("builds encoded retailer searches", () => {
     const links = shopLinks("camel wrap coat & scarf");
+    expect(shopLinks("coat", 50)[0].url).toContain("p_36%3A-5000");
+    expect(shopLinks("coat", 800)[3].url).toContain("ppr_max:800");
     expect(links.map((l) => l.name)).toEqual(["Amazon", "Nordstrom", "Zara", "Google"]);
     expect(links[0].url).toContain("camel%20wrap%20coat%20%26%20scarf");
+  });
+});
+
+describe("budget slider", () => {
+  it("splits the outfit budget by share and rounds to $5", () => {
+    expect(pieceBudget(200, 0.5, [0.5, 0.3, 0.2])).toBe(100);
+    expect(pieceBudget(50, 0.2, [0.5, 0.3, 0.2])).toBe(10);
+    expect(pieceBudget(800, 1, [1, 1, 1])).toBe(265); // shares that don't sum to 1 are normalised
+  });
+});
+
+describe("selfie coach", () => {
+  it("scores 0-100 weighting light and face visibility", () => {
+    expect(coachScore({ lighting: 10, faceVisible: 10, angle: 10, sharpness: 10 })).toBe(100);
+    expect(coachScore({ lighting: 3, faceVisible: 8, angle: 8, sharpness: 8 })).toBe(65);
+    expect(coachScore({ lighting: 2, faceVisible: 3, angle: 9, sharpness: 9 })).toBeLessThan(55);
   });
 });

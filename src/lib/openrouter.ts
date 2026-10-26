@@ -1,6 +1,6 @@
 import "server-only";
 import { db } from "./db";
-import { ESTIMATE_BUFFER, MARKUP, CREDIT_USD, MODELS, type ModelRole } from "./config";
+import { ESTIMATE_BUFFER, IMAGE_ONLY_MODELS, MARKUP, CREDIT_USD, MODELS, VIDEO, type ModelRole } from "./config";
 
 const API = "https://openrouter.ai/api/v1";
 const headers = () => ({
@@ -18,6 +18,21 @@ export type AiResult = { text: string; images: string[]; costUsd: number; model:
 export class AiError extends Error {}
 
 async function call(role: ModelRole, messages: Message[], json: boolean): Promise<AiResult> {
+  const { models } = MODELS[role];
+  if (role !== "image") return request(role, models, messages, json);
+  // Image models differ in output modalities, so try them one at a time instead of OpenRouter's `models` fallback.
+  let last: unknown;
+  for (const m of models) {
+    try {
+      return await request(role, [m], messages, json);
+    } catch (e) {
+      last = e;
+    }
+  }
+  throw last;
+}
+
+async function request(role: ModelRole, models: string[], messages: Message[], json: boolean): Promise<AiResult> {
   const cfg = MODELS[role];
   const res = await fetch(`${API}/chat/completions`, {
     method: "POST",
@@ -25,14 +40,14 @@ async function call(role: ModelRole, messages: Message[], json: boolean): Promis
     signal: AbortSignal.timeout(120_000),
     body: JSON.stringify({
       // OpenRouter tries each model in order when the previous one errors.
-      models: cfg.models,
+      models,
       messages,
       max_tokens: cfg.maxTokens,
       usage: { include: true },
       // Never let providers store or train on user photos.
       provider: { data_collection: "deny" },
       // Keep thinking short so answers fit in max_tokens (and the hold).
-      ...(role === "image" ? { modalities: ["image", "text"] } : { reasoning: { effort: "low" } }),
+      ...(role === "image" ? { modalities: IMAGE_ONLY_MODELS.includes(models[0]) ? ["image"] : ["image", "text"] } : { reasoning: { effort: "low" } }),
       ...(json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
@@ -84,7 +99,7 @@ export async function estimateCredits(role: ModelRole) {
 
 /** Daily cron: cache current OpenRouter prices for every configured model. */
 export async function syncModelPrices() {
-  const res = await fetch(`${API}/models`);
+  const res = await fetch(`${API}/models?output_modalities=all`);
   if (!res.ok) throw new Error(`OpenRouter models ${res.status}`);
   const { data } = (await res.json()) as { data: { id: string; pricing: Record<string, string> }[] };
   const wanted = new Set(Object.values(MODELS).flatMap((m) => m.models));
@@ -103,4 +118,46 @@ export async function openRouterBalance() {
   if (!res.ok) throw new Error(`OpenRouter credits ${res.status}`);
   const { data } = await res.json();
   return Number(data.total_credits) - Number(data.total_usage);
+}
+
+/**
+ * 3-second image-to-video via OpenRouter's async video API. `imageUrl` must be publicly fetchable
+ * (we pass a short-lived signed URL). Tries each configured model once; polls until done.
+ */
+export async function generateVideo(imageUrl: string, prompt: string) {
+  let last: unknown;
+  for (const m of VIDEO.models) {
+    try {
+      const res = await fetch(`${API}/videos`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          model: m.id,
+          prompt,
+          duration: VIDEO.seconds,
+          resolution: m.resolution,
+          aspect_ratio: "3:4",
+          generate_audio: false,
+          frame_images: [{ type: "image_url", image_url: { url: imageUrl }, frame_type: "first_frame" }],
+        }),
+      });
+      if (!res.ok) throw new AiError(`OpenRouter video ${res.status}: ${(await res.text()).slice(0, 300)}`);
+      const job = await res.json();
+      for (let i = 0; i < 48; i++) {
+        await new Promise((r) => setTimeout(r, 5000));
+        const s = await fetch(`${API}/videos/${job.id}`, { headers: headers(), cache: "no-store" }).then((r) => r.json());
+        if (s.status === "completed") {
+          const file = await fetch(s.unsigned_urls[0], { headers: headers() });
+          if (!file.ok) throw new AiError(`Video download ${file.status}`);
+          return { bytes: Buffer.from(await file.arrayBuffer()), costUsd: Number(s.usage?.cost ?? 0), model: m.id };
+        }
+        if (["failed", "cancelled", "expired"].includes(s.status)) throw new AiError(`Video ${s.status}: ${s.error ?? ""}`);
+      }
+      throw new AiError("Video timed out");
+    } catch (e) {
+      console.warn(`[openrouter] video ${m.id} failed`, e);
+      last = e;
+    }
+  }
+  throw last;
 }
