@@ -58,6 +58,15 @@ export default async function AdminPage() {
       ORDER BY d.day DESC`,
   ]);
 
+  const since30 = daysAgo(30);
+  const [byRole, trials, parties, votes, roasts, freePreviews] = await Promise.all([
+    db.aiCall.groupBy({ by: ["role"], where: { createdAt: { gte: since30 } }, _sum: { costUsd: true, credits: true }, _count: true }),
+    db.user.count({ where: { trialUsedAt: { gte: since30 } } }),
+    db.party.count({ where: { createdAt: { gte: since30 } } }),
+    db.partyVote.count({ where: { createdAt: { gte: since30 } } }),
+    db.roast.count({ where: { createdAt: { gte: since30 } } }),
+    db.user.aggregate({ _sum: { freePreviews: true } }),
+  ]);
   const liabilityCredits = liability._sum.amount ?? 0;
   const liabilityUsd = liabilityCredits * CREDIT_USD;
   const providerNeeded = liabilityUsd / MARKUP;
@@ -112,6 +121,28 @@ export default async function AdminPage() {
             <div className="h-full bg-accent" style={{ width: `${Math.min(100, (today.spend / cap) * 100)}%` }} />
           </div>
           <p className="mt-2 text-sm text-muted-foreground">{activeHolds} active holds · {failedCount} failed calls (24h)</p>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card title="Last 30 days by feature">
+          <table className="w-full text-sm">
+            <thead className="text-left text-muted-foreground"><tr><th>Role</th><th>Calls</th><th>Spend</th><th>Credits</th></tr></thead>
+            <tbody>
+              {byRole.map((r) => (
+                <tr key={r.role}><td>{r.role}</td><td>{r._count}</td><td>{usd(r._sum.costUsd ?? 0)}</td><td>{r._sum.credits ?? 0}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card title="Growth (30 days)">
+          <dl className="grid grid-cols-2 gap-2 text-sm">
+            <dt>Free trials claimed</dt><dd className="font-semibold">{trials}</dd>
+            <dt>Glowup Parties</dt><dd className="font-semibold">{parties}</dd>
+            <dt>Party votes</dt><dd className="font-semibold">{votes}</dd>
+            <dt>Roasts</dt><dd className="font-semibold">{roasts}</dd>
+            <dt>Unused free previews</dt><dd className="font-semibold">{freePreviews._sum.freePreviews ?? 0}</dd>
+          </dl>
         </Card>
       </div>
 
