@@ -119,6 +119,7 @@ model StyleSession {
   quiz        Json
   analysis    Json?
   status      String    @default("pending") // pending | analyzing | ready | failed
+  free        Boolean   @default(false) // paid for by the free trial
   createdAt   DateTime  @default(now())
   looks       Look[]
 

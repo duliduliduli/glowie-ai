@@ -1,0 +1,84 @@
+"use server";
+
+import { after } from "next/server";
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
+import { revalidatePath } from "next/cache";
+import { clerkClient } from "@clerk/nextjs/server";
+import { z } from "zod";
+import { requireUser } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { createCheckout } from "@/lib/billing";
+import { deletePhotos, processSession } from "@/lib/flows";
+import { rateLimit } from "@/lib/guards";
+import { deleteImages } from "@/lib/storage";
+import { getPack } from "@/lib/config";
+
+export async function confirmAge(formData: FormData) {
+  const user = await requireUser({ allowUnconfirmedAge: true });
+  if (formData.get("adult") !== "on") return;
+  await db.user.update({ where: { id: user.id }, data: { ageConfirmedAt: new Date() } });
+  redirect("/home");
+}
+
+export async function toggleFavorite(lookId: string) {
+  const user = await requireUser();
+  const look = await db.look.findFirst({ where: { id: lookId, session: { userId: user.id } } });
+  if (!look) return;
+  await db.look.update({ where: { id: lookId }, data: { favorite: !look.favorite } });
+  revalidatePath("/lookbook");
+  return !look.favorite;
+}
+
+export async function retrySession(sessionId: string) {
+  const user = await requireUser();
+  await rateLimit("ai", user.id);
+  const r = await db.styleSession.updateMany({ where: { id: sessionId, userId: user.id, status: "failed" }, data: { status: "analyzing" } });
+  if (r.count) after(() => processSession(sessionId));
+  revalidatePath(`/session/${sessionId}`);
+}
+
+export async function buyPack(packId: string) {
+  const user = await requireUser();
+  await rateLimit("checkout", user.id);
+  const h = await headers();
+  const origin = process.env.NEXT_PUBLIC_APP_URL ?? `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+  const result = await createCheckout(user.id, packId, origin);
+  if ("error" in result) return { error: result.error };
+  redirect(result.url);
+}
+
+const AutoTopUp = z.object({ packId: z.string().nullable(), below: z.number().int().min(1).max(200) });
+
+export async function setAutoTopUp(input: { packId: string | null; below: number }) {
+  const user = await requireUser();
+  const { packId, below } = AutoTopUp.parse(input);
+  if (packId && !getPack(packId)) return;
+  await db.user.update({ where: { id: user.id }, data: { autoTopUpPackId: packId, autoTopUpBelow: below } });
+  revalidatePath("/credits");
+}
+
+export async function setDeleteImmediately(on: boolean) {
+  const user = await requireUser();
+  await db.user.update({ where: { id: user.id }, data: { deleteOriginalsImmediately: on } });
+  revalidatePath("/settings");
+}
+
+export async function deleteAllPhotos() {
+  const user = await requireUser();
+  const n = await deletePhotos({ userId: user.id });
+  revalidatePath("/", "layout");
+  return n;
+}
+
+/** Permanently removes every photo, all data, and the Clerk login. */
+export async function deleteAccount(confirmation: string) {
+  const user = await requireUser();
+  if (confirmation !== "DELETE") return { error: 'Type "DELETE" to confirm.' };
+  const photos = await db.photo.findMany({ where: { userId: user.id }, select: { blobPath: true } });
+  await deleteImages(photos.map((p) => p.blobPath));
+  await db.trialClaim.updateMany({ where: { userId: user.id }, data: { userId: "deleted" } }); // keep device hash so the free trial can't be re-farmed
+  await db.user.delete({ where: { id: user.id } });
+  await (await clerkClient()).users.deleteUser(user.clerkId);
+  redirect("/");
+}
