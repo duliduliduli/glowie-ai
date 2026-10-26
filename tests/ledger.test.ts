@@ -15,6 +15,7 @@ import {
   withHold,
 } from "@/lib/ledger";
 import { handleStripeEvent, purchaseBlockReason } from "@/lib/billing";
+import { claimTrial, takeFreePreview } from "@/lib/trial";
 
 // Unique per run so the test DB never needs wiping.
 const RUN = Date.now().toString(36);
@@ -27,7 +28,7 @@ async function newUser(credits = 0, extra: { referredById?: string; createdAt?: 
 }
 
 const event = (type: string, object: object, id = `evt_${Math.random()}`) => ({ id, type, data: { object } }) as unknown as Stripe.Event;
-const paidSession = (userId: string, pi: string, packId = "starter", amount = 499) =>
+const paidSession = (userId: string, pi: string, packId = "starter", amount = 299) =>
   ({ id: `cs_${pi}`, payment_status: "paid", payment_intent: pi, amount_total: amount, customer: `cus_${userId}`, metadata: { userId, packId } });
 
 describe("reserve / settle / release", () => {
@@ -122,8 +123,8 @@ describe("Stripe webhook", () => {
     const e1 = event("checkout.session.completed", s, `evt_once_1_${RUN}`);
     expect(await handleStripeEvent(e1)).toBe("processed");
     expect(await handleStripeEvent(e1)).toBe("duplicate");
-    await handleStripeEvent(event("payment_intent.succeeded", { id: `pi_once_${RUN}`, amount_received: 499, metadata: { userId: u.id, packId: "starter" } }));
-    expect((await getBalance(u.id)).total).toBe(50);
+    await handleStripeEvent(event("payment_intent.succeeded", { id: `pi_once_${RUN}`, amount_received: 299, metadata: { userId: u.id, packId: "starter" } }));
+    expect((await getBalance(u.id)).total).toBe(30);
     expect((await db.user.findUnique({ where: { id: u.id } }))?.stripeCustomerId).toBe(`cus_${u.id}`);
   });
 
@@ -146,7 +147,7 @@ describe("Stripe webhook", () => {
     const u = await newUser(0, { referredById: referrer.id });
     await handleStripeEvent(event("checkout.session.completed", paidSession(u.id, `pi_ref1_${RUN}`)));
     await handleStripeEvent(event("checkout.session.completed", paidSession(u.id, `pi_ref2_${RUN}`)));
-    expect((await getBalance(u.id)).total).toBe(50 + 50 + 20);
+    expect((await getBalance(u.id)).total).toBe(30 + 30 + 20);
     expect((await getBalance(referrer.id)).total).toBe(20);
   });
 
@@ -161,14 +162,14 @@ describe("Stripe webhook", () => {
     expect(await getBalance(u.id)).toEqual({ total: 10, held: 10, available: 0 });
     await settle(hold, 10);
     expect((await getBalance(u.id)).total).toBe(0);
-    expect(await purchaseBlockReason(u.id, 499)).toMatch(/disabled/);
+    expect(await purchaseBlockReason(u.id, 299)).toMatch(/disabled/);
   });
 
   it("refund removes the refunded share of credits, never below zero", async () => {
     const u = await newUser();
     await handleStripeEvent(event("checkout.session.completed", paidSession(u.id, `pi_refund_${RUN}`)));
-    await withHold(u.id, 45, "spend", async () => ({ result: null, costUsd: 1.5 })); // 45 credits used
-    await handleStripeEvent(event("charge.refunded", { id: `ch_1_${RUN}`, payment_intent: `pi_refund_${RUN}`, amount_refunded: 499 }));
+    await withHold(u.id, 25, "spend", async () => ({ result: null, costUsd: 0.8 })); // 24 credits used
+    await handleStripeEvent(event("charge.refunded", { id: `ch_1_${RUN}`, payment_intent: `pi_refund_${RUN}`, amount_refunded: 299 }));
     expect((await getBalance(u.id)).total).toBe(0);
   });
 });
@@ -189,5 +190,45 @@ describe("purchase limits", () => {
     expect(await clawback(u.id, "refund", 4, `cb:1_${RUN}`, "x")).toBe(4);
     expect(await clawback(u.id, "refund", 4, `cb:1_${RUN}`, "x")).toBe(0);
     expect((await getBalance(u.id)).total).toBe(6);
+  });
+});
+
+describe("free trial", () => {
+  const dev = () => `device_${RUN}_${Math.random()}`;
+  const phone = () => `+1555${Math.floor(Math.random() * 1e7)}`;
+
+  it("grants 1 free preview once per account", async () => {
+    const u = await newUser();
+    await claimTrial(u.id, dev(), phone());
+    expect((await db.user.findUniqueOrThrow({ where: { id: u.id } })).freePreviews).toBe(1);
+    await expect(claimTrial(u.id, dev(), phone())).rejects.toThrow(/already been used/);
+  });
+
+  it("blocks a second account on the same device or the same phone", async () => {
+    const d = dev();
+    const p = phone();
+    await claimTrial((await newUser()).id, d, p);
+    const other = await newUser();
+    await expect(claimTrial(other.id, d, phone())).rejects.toThrow();
+    await expect(claimTrial(other.id, dev(), p.replace("+1", "+1 "))).rejects.toThrow();
+    // Failed claims roll back completely, so a fresh device + phone still works.
+    await claimTrial(other.id, dev(), phone());
+  });
+
+  it("adds the party voter bonus, but not for the party's own host", async () => {
+    const host = await newUser();
+    const party = await db.party.create({ data: { token: `party_${RUN}`, userId: host.id, lookAId: "a", lookBId: "b" } });
+    const voter = await newUser();
+    await claimTrial(voter.id, dev(), phone(), party.token);
+    expect((await db.user.findUniqueOrThrow({ where: { id: voter.id } })).freePreviews).toBe(2);
+    await claimTrial(host.id, dev(), phone(), party.token);
+    expect((await db.user.findUniqueOrThrow({ where: { id: host.id } })).freePreviews).toBe(1);
+  });
+
+  it("free previews can't be spent twice concurrently", async () => {
+    const u = await newUser();
+    await claimTrial(u.id, dev(), phone());
+    const taken = await Promise.all([1, 2, 3].map(() => takeFreePreview(u.id)));
+    expect(taken.filter(Boolean)).toHaveLength(1);
   });
 });

@@ -1,46 +1,39 @@
 import { after } from "next/server";
 import { cookies, headers } from "next/headers";
-import { createHash } from "node:crypto";
 import { z } from "zod";
-import { apiUser } from "@/lib/auth";
+import { apiUser, verifiedPhone } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { handle } from "@/lib/http";
-import { processSession } from "@/lib/flows";
+import { processSession, sessionCreditEstimate } from "@/lib/flows";
 import { assertSafePrompt, GuardError } from "@/lib/guards";
 import { getBalance, InsufficientCreditsError } from "@/lib/ledger";
-import { estimateCredits } from "@/lib/openrouter";
+import { claimTrial } from "@/lib/trial";
 import { verifyTurnstile } from "@/lib/turnstile";
-import { VIBES } from "@/lib/config";
+import { EVENT_VIBE, VIBES } from "@/lib/config";
 
 export const maxDuration = 300;
 
 const Body = z.object({
   selfieId: z.string(),
   fullBodyId: z.string().nullish(),
-  vibe: z.enum(VIBES.map((v) => v.id) as [string, ...string[]]),
+  vibe: z.enum([EVENT_VIBE, ...VIBES.map((v) => v.id)]),
   customPrompt: z.string().max(300).nullish(),
   quiz: z.object({
     occasion: z.string().max(60).optional(),
     budget: z.string().max(30).optional(),
     highlight: z.array(z.string().max(40)).max(5).optional(),
   }),
+  event: z
+    .object({
+      description: z.string().min(3).max(300),
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      location: z.string().min(2).max(100),
+      budgetUsd: z.number().int().min(0).max(10000),
+    })
+    .nullish(),
   useTrial: z.boolean().optional(),
   turnstileToken: z.string().nullish(),
 });
-
-/** One free analysis per account AND per device, behind Turnstile. Claimed atomically. */
-async function claimTrial(userId: string, token: string | null | undefined) {
-  const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
-  if (!(await verifyTurnstile(token ?? null, ip))) throw new GuardError("Please complete the human check.", 400);
-  const did = (await cookies()).get("did")?.value;
-  if (!did) throw new GuardError("Please enable cookies to use your free analysis.", 400);
-  const deviceHash = createHash("sha256").update(did).digest("hex");
-  await db.$transaction(async (tx) => {
-    const used = await tx.user.updateMany({ where: { id: userId, trialUsedAt: null }, data: { trialUsedAt: new Date() } });
-    const device = await tx.trialClaim.createMany({ data: [{ deviceHash, userId }], skipDuplicates: true });
-    if (!used.count || !device.count) throw new GuardError("Your free analysis has already been used on this account or device.", 409);
-  });
-}
 
 export async function POST(req: Request) {
   return handle(async () => {
@@ -52,16 +45,30 @@ export async function POST(req: Request) {
       if (!body.customPrompt?.trim()) throw new GuardError("Describe your custom vibe.", 400);
       assertSafePrompt(body.customPrompt);
     }
+    if (body.vibe === EVENT_VIBE) {
+      if (!body.event) throw new GuardError("Tell us about the event.", 400);
+      assertSafePrompt(body.event.description);
+    }
     const photos = await db.photo.findMany({ where: { userId: user.id, deletedAt: null, id: { in: [body.selfieId, body.fullBodyId].filter(Boolean) as string[] } } });
-    if (!photos.some((p) => p.id === body.selfieId && p.kind === "selfie")) throw new GuardError("Selfie not found", 400);
+    const selfie = photos.find((p) => p.id === body.selfieId && p.kind === "selfie");
+    if (!selfie) throw new GuardError("Selfie not found", 400);
     if (body.fullBodyId && !photos.some((p) => p.id === body.fullBodyId && p.kind === "fullbody")) throw new GuardError("Photo not found", 400);
 
-    if (body.useTrial) await claimTrial(user.id, body.turnstileToken);
-    else {
-      // Fail fast with a clear message; the real holds happen per model call.
-      const needed = (await estimateCredits("analysis")) + (await estimateCredits("looks"));
+    if (body.useTrial) {
+      const h = await headers();
+      const ip = h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+      if (!(await verifyTurnstile(body.turnstileToken ?? null, ip))) throw new GuardError("Please complete the human check.", 400);
+      const phone = await verifiedPhone(user.clerkId);
+      if (!phone) throw new GuardError("Verify your phone number to unlock your free trial.", 403, { code: "phone_required" });
+      const jar = await cookies();
+      const did = jar.get("did")?.value;
+      if (!did) throw new GuardError("Please enable cookies to use your free trial.", 400);
+      await claimTrial(user.id, did, phone, jar.get("party")?.value);
+    } else {
+      // Fail fast on the text steps; previews are skipped (not failed) if credits run out mid-session.
+      const { text } = await sessionCreditEstimate(body.vibe, selfie.fromCamera);
       const { available } = await getBalance(user.id);
-      if (available < needed) throw new InsufficientCreditsError(needed, available);
+      if (available < text) throw new InsufficientCreditsError(text, available);
     }
 
     const session = await db.styleSession.create({
@@ -72,6 +79,7 @@ export async function POST(req: Request) {
         vibe: body.vibe,
         customPrompt: body.vibe === "custom" ? body.customPrompt : null,
         quiz: body.quiz,
+        extra: body.vibe === EVENT_VIBE ? { event: body.event } : undefined,
         status: "analyzing",
         free: !!body.useTrial,
       },

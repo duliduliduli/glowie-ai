@@ -9,22 +9,23 @@ const limiters = redis
       ai: new Ratelimit({ redis, prefix: "rl:ai", limiter: Ratelimit.slidingWindow(20, "1 h") }),
       upload: new Ratelimit({ redis, prefix: "rl:upload", limiter: Ratelimit.slidingWindow(30, "1 h") }),
       checkout: new Ratelimit({ redis, prefix: "rl:checkout", limiter: Ratelimit.slidingWindow(10, "1 h") }),
+      vote: new Ratelimit({ redis, prefix: "rl:vote", limiter: Ratelimit.slidingWindow(30, "1 h") }),
     }
   : null;
 
 export class GuardError extends Error {
-  constructor(message: string, public status = 429) {
+  constructor(message: string, public status = 429, public extra?: { code?: string; [k: string]: unknown }) {
     super(message);
   }
 }
 
 /** Per-user rate limit. shortcut: no-op without Upstash env (local dev only), set UPSTASH_* in production. */
-export async function rateLimit(kind: "ai" | "upload" | "checkout", userId: string) {
+export async function rateLimit(kind: "ai" | "upload" | "checkout" | "vote", key: string) {
   if (!limiters) {
     if (process.env.NODE_ENV === "production") throw new GuardError("Rate limiter not configured", 503);
     return;
   }
-  const { success } = await limiters[kind].limit(userId);
+  const { success } = await limiters[kind].limit(key);
   if (!success) throw new GuardError("You're going a little fast. Try again in a few minutes.");
 }
 

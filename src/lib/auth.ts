@@ -1,5 +1,5 @@
 import "server-only";
-import { auth, currentUser } from "@clerk/nextjs/server";
+import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
@@ -36,6 +36,12 @@ export async function apiUser() {
   if (!clerkId) return null;
   const user = await db.user.findUnique({ where: { clerkId } });
   return user?.ageConfirmedAt ? user : null;
+}
+
+/** The user's verified phone number from Clerk, or null. */
+export async function verifiedPhone(clerkId: string) {
+  const u = await (await clerkClient()).users.getUser(clerkId);
+  return u.phoneNumbers.find((p) => p.verification?.status === "verified")?.phoneNumber ?? null;
 }
 
 export const isAdmin = (email: string) =>

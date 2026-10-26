@@ -9,7 +9,7 @@ export async function handle(fn: () => Promise<unknown>) {
   try {
     return NextResponse.json(await fn());
   } catch (e) {
-    if (e instanceof GuardError) return NextResponse.json({ error: e.message }, { status: e.status });
+    if (e instanceof GuardError) return NextResponse.json({ error: e.message, ...e.extra }, { status: e.status });
     if (e instanceof InsufficientCreditsError)
       return NextResponse.json({ error: `You need ${e.needed} credits (you have ${e.available}).`, code: "insufficient_credits" }, { status: 402 });
     if (e instanceof AccountFrozenError) return NextResponse.json({ error: "Your account is on hold. Contact support." }, { status: 403 });
