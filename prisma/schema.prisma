@@ -1,0 +1,163 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id               String    @id @default(cuid())
+  clerkId          String    @unique
+  email            String
+  createdAt        DateTime  @default(now())
+  ageConfirmedAt   DateTime?
+  trialUsedAt      DateTime?
+  referralCode     String    @unique
+  referredById     String?
+  referredBy       User?     @relation("Referrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals        User[]    @relation("Referrals")
+  stripeCustomerId String?   @unique
+  // Fraud controls: set by charge.dispute.created.
+  frozenAt         DateTime?
+  purchasesBlocked Boolean   @default(false)
+  autoTopUpPackId  String?
+  autoTopUpBelow   Int?
+  lastAutoTopUpAt  DateTime?
+  deleteOriginalsImmediately Boolean @default(false)
+
+  ledger   LedgerEntry[]
+  holds    CreditHold[]
+  photos   Photo[]
+  sessions StyleSession[]
+  aiCalls  AiCall[]
+}
+
+enum LedgerType {
+  purchase
+  usage
+  refund
+  referral
+  admin_adjust
+}
+
+// Append-only. Balance = SUM(amount). Never UPDATE or DELETE rows (except account deletion cascade).
+model LedgerEntry {
+  id             String     @id @default(cuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type           LedgerType
+  amount         Int // credits, signed
+  usdCents       Int? // money received, for purchases
+  idempotencyKey String     @unique
+  note           String?
+  createdAt      DateTime   @default(now())
+
+  @@index([userId])
+}
+
+enum HoldStatus {
+  active
+  settled
+  released
+}
+
+model CreditHold {
+  id        String     @id @default(cuid())
+  userId    String
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  status    HoldStatus @default(active)
+  reason    String
+  createdAt DateTime   @default(now())
+  closedAt  DateTime?
+
+  @@index([userId, status])
+}
+
+model StripeEvent {
+  id          String   @id // Stripe event id
+  type        String
+  processedAt DateTime @default(now())
+}
+
+model TrialClaim {
+  deviceHash String   @id
+  userId     String
+  createdAt  DateTime @default(now())
+}
+
+enum PhotoKind {
+  selfie
+  fullbody
+  generated
+}
+
+model Photo {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       PhotoKind
+  fromCamera Boolean   @default(false)
+  blobPath   String
+  createdAt  DateTime  @default(now())
+  deletedAt  DateTime?
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model StyleSession {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  selfieId    String
+  fullBodyId  String?
+  vibe        String
+  customPrompt String?
+  quiz        Json
+  analysis    Json?
+  status      String    @default("pending") // pending | analyzing | ready | failed
+  createdAt   DateTime  @default(now())
+  looks       Look[]
+
+  @@index([userId, createdAt])
+}
+
+model Look {
+  id         String       @id @default(cuid())
+  sessionId  String
+  session    StyleSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  index      Int
+  data       Json
+  previewId  String?
+  favorite   Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+
+  @@unique([sessionId, index])
+}
+
+model AiCall {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role         String
+  model        String?
+  status       String // ok | failed
+  costUsd      Float    @default(0)
+  credits      Int      @default(0)
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model ModelPrice {
+  model           String   @id
+  promptUsd       Float // per token
+  completionUsd   Float
+  imageInputUsd   Float    @default(0)
+  imageOutputUsd  Float    @default(0)
+  updatedAt       DateTime @updatedAt
+}
