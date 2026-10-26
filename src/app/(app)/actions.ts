@@ -13,6 +13,42 @@ import { deletePhotos, processSession } from "@/lib/flows";
 import { rateLimit } from "@/lib/guards";
 import { deleteImages } from "@/lib/storage";
 import { getPack } from "@/lib/config";
+import { createParty, shareLink } from "@/lib/sharing";
+import { GuardError } from "@/lib/guards";
+
+const origin = async () => {
+  const h = await headers();
+  return process.env.NEXT_PUBLIC_APP_URL ?? `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
+};
+
+/** Public link for a stylist handoff card or a roast card. */
+export async function shareCard(kind: "stylist" | "roast", refId: string) {
+  const user = await requireUser();
+  const token = await shareLink(user.id, kind, refId);
+  return `${await origin()}/c/${token}`;
+}
+
+export async function stopSharing(kind: "stylist" | "roast", refId: string) {
+  const user = await requireUser();
+  await db.shareLink.updateMany({ where: { kind, refId, userId: user.id }, data: { revokedAt: new Date() } });
+}
+
+/** Glowup Party link for two previewed looks. */
+export async function startParty(lookAId: string, lookBId: string) {
+  const user = await requireUser();
+  try {
+    return { url: `${await origin()}/p/${await createParty(user.id, lookAId, lookBId)}` };
+  } catch (e) {
+    if (e instanceof GuardError) return { error: e.message };
+    throw e;
+  }
+}
+
+export async function endParty(partyId: string) {
+  const user = await requireUser();
+  await db.party.updateMany({ where: { id: partyId, userId: user.id }, data: { revokedAt: new Date() } });
+  revalidatePath("/", "layout");
+}
 
 export async function confirmAge(formData: FormData) {
   const user = await requireUser({ allowUnconfirmedAge: true });
@@ -41,9 +77,7 @@ export async function retrySession(sessionId: string) {
 export async function buyPack(packId: string) {
   const user = await requireUser();
   await rateLimit("checkout", user.id);
-  const h = await headers();
-  const origin = process.env.NEXT_PUBLIC_APP_URL ?? `${h.get("x-forwarded-proto") ?? "https"}://${h.get("host")}`;
-  const result = await createCheckout(user.id, packId, origin);
+  const result = await createCheckout(user.id, packId, await origin());
   if ("error" in result) return { error: result.error };
   redirect(result.url);
 }
