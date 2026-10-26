@@ -27,17 +27,17 @@ type Usage = { promptTokens: number; completionTokens: number; imageInputs: numb
 
 export const MODELS = {
   analysis: {
-    models: ["google/gemini-4-argon", "openai/gpt-5.4"],
-    maxTokens: 2000,
-    usage: { promptTokens: 2500, completionTokens: 2000, imageInputs: 1, imageOutputTokens: 0 },
+    models: ["google/gemini-4-argon", "openai/gpt-5.4-mini"],
+    maxTokens: 1800,
+    usage: { promptTokens: 2500, completionTokens: 1800, imageInputs: 1, imageOutputTokens: 0 },
   },
   looks: {
-    models: ["google/gemini-4-argon", "openai/gpt-5.4"],
-    maxTokens: 6000,
-    usage: { promptTokens: 4000, completionTokens: 6000, imageInputs: 0, imageOutputTokens: 0 },
+    models: ["google/gemini-4-argon", "openai/gpt-5.4-mini"],
+    maxTokens: 4500,
+    usage: { promptTokens: 4000, completionTokens: 4500, imageInputs: 0, imageOutputTokens: 0 },
   },
   image: {
-    models: ["google/gemini-nano-banana-2.1", "google/gemini-3.1-flash-image"],
+    models: ["google/gemini-nano-banana-2.1", "google/gemini-2.5-flash-image"],
     maxTokens: 1500,
     usage: { promptTokens: 3000, completionTokens: 500, imageInputs: 2, imageOutputTokens: 1300 },
   },

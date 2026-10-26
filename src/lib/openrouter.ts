@@ -31,7 +31,8 @@ async function call(role: ModelRole, messages: Message[], json: boolean): Promis
       usage: { include: true },
       // Never let providers store or train on user photos.
       provider: { data_collection: "deny" },
-      ...(role === "image" ? { modalities: ["image", "text"] } : {}),
+      // Keep thinking short so answers fit in max_tokens (and the hold).
+      ...(role === "image" ? { modalities: ["image", "text"] } : { reasoning: { effort: "low" } }),
       ...(json ? { response_format: { type: "json_object" } } : {}),
     }),
   });

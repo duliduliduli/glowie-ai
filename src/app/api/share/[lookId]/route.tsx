@@ -25,6 +25,7 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/share/[lookId]"
 
   const panel = (src: string | null, label: string) => (
     <div style={{ position: "relative", display: "flex", flex: 1, borderRadius: 48, overflow: "hidden", background: "#e7e8ec" }}>
+      {/* eslint-disable-next-line @next/next/no-img-element -- Satori renders plain img */}
       {src ? <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : null}
       <div style={{ position: "absolute", top: 32, left: 32, padding: "12px 28px", borderRadius: 999, background: "rgba(17,17,20,0.75)", color: "white", fontSize: 34, fontWeight: 700, letterSpacing: 2 }}>
         {label}

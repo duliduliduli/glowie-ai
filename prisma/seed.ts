@@ -8,9 +8,8 @@ const db = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.
 // Prices per token, verified on OpenRouter 2026-10-26. The daily cron keeps these fresh.
 const PRICES: Record<string, { promptUsd: number; completionUsd: number; imageInputUsd?: number; imageOutputUsd?: number }> = {
   "google/gemini-4-argon": { promptUsd: 2e-6, completionUsd: 1e-5, imageInputUsd: 2e-6 },
-  "openai/gpt-5.4": { promptUsd: 2.5e-6, completionUsd: 1.5e-5 },
   "google/gemini-nano-banana-2.1": { promptUsd: 1.5e-6, completionUsd: 7.5e-6, imageOutputUsd: 3e-5 },
-  "google/gemini-3.1-flash-image": { promptUsd: 5e-7, completionUsd: 3e-6, imageOutputUsd: 6e-5 },
+  "google/gemini-2.5-flash-image": { promptUsd: 3e-7, completionUsd: 2.5e-6, imageInputUsd: 3e-7, imageOutputUsd: 3e-5 },
   "google/gemini-3.5-flash-lite": { promptUsd: 3e-7, completionUsd: 2.5e-6, imageInputUsd: 3e-7 },
   "openai/gpt-5.4-mini": { promptUsd: 7.5e-7, completionUsd: 4.5e-6 },
 };
