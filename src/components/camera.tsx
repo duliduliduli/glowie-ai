@@ -11,15 +11,21 @@ export function Camera({ onCapture, onUnavailable }: { onCapture: (b: Blob) => v
 
   useEffect(() => {
     let stream: MediaStream | undefined;
+    let cancelled = false;
     navigator.mediaDevices
       ?.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 1600 } }, audio: false })
       .then((s) => {
         stream = s;
+        // Unmounted while the permission prompt was open: release the camera right away.
+        if (cancelled) return s.getTracks().forEach((t) => t.stop());
         if (video.current) video.current.srcObject = s;
       })
       .catch(() => onUnavailable("Camera unavailable. Allow camera access or upload a photo."));
     if (!navigator.mediaDevices) onUnavailable("This browser can't open the camera. Upload a photo instead.");
-    return () => stream?.getTracks().forEach((t) => t.stop());
+    return () => {
+      cancelled = true;
+      stream?.getTracks().forEach((t) => t.stop());
+    };
   }, [onUnavailable]);
 
   const snap = () => {

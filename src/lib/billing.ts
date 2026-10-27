@@ -1,7 +1,8 @@
 import "server-only";
 import type Stripe from "stripe";
 import { db } from "./db";
-import { clawback, getBalance, grant } from "./ledger";
+import type { Prisma } from "@/generated/prisma/client";
+import { clawback, getBalance, grant, withUserLock } from "./ledger";
 import { stripe } from "./stripe";
 import {
   getPack,
@@ -12,17 +13,22 @@ import {
 } from "./config";
 
 /** Returns an error message if this user may not buy this pack right now, else null. */
-export async function purchaseBlockReason(userId: string, usdCents: number) {
-  const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
+export async function purchaseBlockReason(userId: string, usdCents: number, tx: Prisma.TransactionClient = db) {
+  const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.frozenAt || user.purchasesBlocked) return "Purchases are disabled on this account. Contact support.";
   const ageDays = (Date.now() - user.createdAt.getTime()) / 86_400_000;
   if (ageDays >= NEW_ACCOUNT_DAYS) return null;
-  const paid = await db.ledgerEntry.aggregate({ where: { userId, type: "purchase" }, _sum: { usdCents: true }, _count: true });
-  const spent = paid._sum.usdCents ?? 0;
+  const paid = await tx.ledgerEntry.aggregate({ where: { userId, type: "purchase" }, _sum: { usdCents: true }, _count: true });
+  // Checkouts that are open but unpaid count too, or five parallel checkouts would all pass the check.
+  const open = await tx.pendingCheckout.aggregate({ where: { userId, createdAt: { gt: new Date(Date.now() - CHECKOUT_MINUTES * 60_000) } }, _sum: { usdCents: true } });
+  const spent = (paid._sum.usdCents ?? 0) + (open._sum.usdCents ?? 0);
   if (paid._count === 0 && usdCents > NEW_ACCOUNT_FIRST_PURCHASE_MAX_CENTS) return "New accounts can buy up to $20 on their first purchase.";
   if (spent + usdCents > NEW_ACCOUNT_WEEK_MAX_CENTS) return "New accounts can buy up to $50 in their first week.";
   return null;
 }
+
+/** Stripe Checkout sessions expire after this long (its minimum is 30 minutes). */
+const CHECKOUT_MINUTES = 30;
 
 type PurchaseMeta = { userId?: string; packId?: string };
 
@@ -56,9 +62,14 @@ export async function handleStripeEvent(event: Stripe.Event) {
   if (await db.stripeEvent.findUnique({ where: { id: event.id } })) return "duplicate";
 
   switch (event.type) {
+    case "checkout.session.expired": {
+      await db.pendingCheckout.deleteMany({ where: { id: event.data.object.id } });
+      break;
+    }
     case "checkout.session.completed":
     case "checkout.session.async_payment_succeeded": {
       const s = event.data.object;
+      if (s.payment_status === "paid") await db.pendingCheckout.deleteMany({ where: { id: s.id } });
       if (s.payment_status === "paid" && s.metadata?.userId) {
         const pi = id(s.payment_intent);
         if (pi) await creditPurchase(s.metadata, pi, s.amount_total ?? 0);
@@ -101,27 +112,40 @@ export async function handleStripeEvent(event: Stripe.Event) {
 export async function createCheckout(userId: string, packId: string, appUrl: string) {
   const pack = getPack(packId);
   if (!pack) throw new Error("Unknown pack");
-  const blocked = await purchaseBlockReason(userId, pack.usdCents);
-  if (blocked) return { error: blocked };
-  const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
-  const metadata = { userId, packId: pack.id };
-  const session = await stripe().checkout.sessions.create({
-    mode: "payment",
-    line_items: [
-      {
-        quantity: 1,
-        price_data: { currency: "usd", unit_amount: pack.usdCents, product_data: { name: `Glowie ${pack.name}: ${pack.credits} credits` } },
-      },
-    ],
-    ...(user.stripeCustomerId ? { customer: user.stripeCustomerId } : { customer_creation: "always" as const, customer_email: user.email || undefined }),
-    // Saved card enables optional auto top-up.
-    payment_intent_data: { metadata, setup_future_usage: "off_session" },
-    metadata,
-    client_reference_id: userId,
-    success_url: `${appUrl}/credits?paid=1`,
-    cancel_url: `${appUrl}/credits`,
+  // Check the caps and record the open checkout under the user's lock, so parallel requests can't all pass.
+  const tempId = `tmp_${crypto.randomUUID()}`;
+  const blocked = await withUserLock(userId, async (tx) => {
+    const reason = await purchaseBlockReason(userId, pack.usdCents, tx);
+    if (!reason) await tx.pendingCheckout.create({ data: { id: tempId, userId, usdCents: pack.usdCents } });
+    return reason;
   });
-  return { url: session.url! };
+  if (blocked) return { error: blocked };
+  try {
+    const user = await db.user.findUniqueOrThrow({ where: { id: userId } });
+    const metadata = { userId, packId: pack.id };
+    const session = await stripe().checkout.sessions.create({
+      mode: "payment",
+      line_items: [
+        {
+          quantity: 1,
+          price_data: { currency: "usd", unit_amount: pack.usdCents, product_data: { name: `Glowie ${pack.name}: ${pack.credits} credits` } },
+        },
+      ],
+      ...(user.stripeCustomerId ? { customer: user.stripeCustomerId } : { customer_creation: "always" as const, customer_email: user.email || undefined }),
+      // Saved card enables optional auto top-up.
+      payment_intent_data: { metadata, setup_future_usage: "off_session" },
+      metadata,
+      client_reference_id: userId,
+      expires_at: Math.floor(Date.now() / 1000) + CHECKOUT_MINUTES * 60,
+      success_url: `${appUrl}/credits?paid=1`,
+      cancel_url: `${appUrl}/credits`,
+    });
+    await db.pendingCheckout.update({ where: { id: tempId }, data: { id: session.id } });
+    return { url: session.url! };
+  } catch (e) {
+    await db.pendingCheckout.deleteMany({ where: { id: tempId } });
+    throw e;
+  }
 }
 
 /** Charges the saved card for the chosen pack when the balance drops below the user's threshold. Credited by the webhook. */

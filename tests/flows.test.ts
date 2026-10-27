@@ -20,6 +20,9 @@ const { db } = await import("@/lib/db");
 const { grant, getBalance } = await import("@/lib/ledger");
 const { claimTrial } = await import("@/lib/trial");
 const { uploadPhoto, processSession, makePreview, roastFit } = await import("@/lib/flows");
+const { assertSafeByModel, runAi, LooksSchema, RoastSchema, looksMessages, parseWith } = await import("@/lib/ai");
+const { AccountFrozenError } = await import("@/lib/ledger");
+const { GuardError } = await import("@/lib/guards");
 
 const RUN = Date.now().toString(36);
 const color = (name: string) => ({ name, hex: "#aabbcc" });
@@ -45,6 +48,9 @@ const look = (i: number) => ({
   colorsToAvoid: [color("c")],
 });
 
+let omitCost = false;
+let omitFail = false;
+let match: boolean | null | "auto" = "auto";
 let photoCheck = { lighting: 9, angle: 9, sharpness: 9, faceVisible: 9 };
 const calls: string[] = [];
 const tinyJpeg = (await sharp({ create: { width: 8, height: 8, channels: 3, background: "#c97" } }).jpeg().toBuffer()).toString("base64");
@@ -53,16 +59,21 @@ const tinyJpeg = (await sharp({ create: { width: 8, height: 8, channels: 3, back
 vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
   const body = JSON.parse(String(init?.body ?? "{}"));
   const sys = JSON.stringify(body.messages?.[0]?.content ?? "");
+  if (omitFail) return new Response("down", { status: 500 });
   const reply = (content: unknown, cost: number, images?: string[]) =>
-    Response.json({ model: body.models?.[0], choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content), images } }], usage: { cost } });
+    Response.json({ model: body.models?.[0], choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content), images } }], usage: omitCost ? {} : { cost } });
   if (!String(url).includes("/chat/completions")) throw new Error(`unexpected fetch ${url}`);
   if (body.modalities) {
     calls.push("image");
     return reply("", 0.08, [{ image_url: { url: `data:image/jpeg;base64,${tinyJpeg}` } }] as never);
   }
+  if (sys.includes("text safety checker")) {
+    calls.push("textcheck");
+    return reply({ unsafe: /zendaya/i.test(JSON.stringify(body.messages.at(-1).content)) }, 0.0005);
+  }
   if (sys.includes("safety checker")) {
     calls.push("check");
-    return reply({ realPhoto: true, faceCount: 1, clearlyAdult: true, nudityOrSexual: false, samePersonAsReference: null, tips: ["Face a window"], ...photoCheck }, 0.001);
+    return reply({ realPhoto: true, faceCount: 1, clearlyAdult: true, nudityOrSexual: false, samePersonAsReference: match === "auto" ? ((JSON.stringify(body.messages.at(-1).content).match(/image_url/g) ?? []).length >= 2 ? true : null) : match, tips: ["Face a window"], ...photoCheck }, 0.001);
   }
   if (sys.includes("colour analyst")) {
     calls.push("analysis");
@@ -84,6 +95,9 @@ async function newUser() {
 const file = async () => new File([await sharp({ create: { width: 64, height: 64, channels: 3, background: "#fff" } }).png().toBuffer()], "s.png", { type: "image/png" });
 
 beforeEach(() => {
+  omitCost = false;
+  omitFail = false;
+  match = "auto";
   calls.length = 0;
   photoCheck = { lighting: 9, angle: 9, sharpness: 9, faceVisible: 9 };
 });
@@ -97,9 +111,35 @@ describe("selfie coach", () => {
     expect(await getBalance(u.id)).toMatchObject({ total: 0 });
   });
 
+  it("empty and corrupt files are a clean 400, not a crash", async () => {
+    const u = await newUser();
+    await expect(uploadPhoto(u.id, new File([], "e.jpg", { type: "image/jpeg" }), "selfie", true)).rejects.toMatchObject({ status: 400 });
+    await expect(uploadPhoto(u.id, new File([Buffer.from("not an image")], "c.png", { type: "image/png" }), "selfie", true)).rejects.toMatchObject({ status: 400 });
+    expect(await db.photo.count({ where: { userId: u.id } })).toBe(0);
+  });
+
   it("requires a selfie before an outfit photo", async () => {
     const u = await newUser();
     await expect(uploadPhoto(u.id, await file(), "outfit", false)).rejects.toThrow(/selfie first/);
+  });
+});
+
+describe("same-person checks fail closed", () => {
+  it("a later selfie must match the account's first selfie", async () => {
+    const u = await newUser();
+    await uploadPhoto(u.id, await file(), "selfie", true);
+    match = false;
+    await expect(uploadPhoto(u.id, await file(), "selfie", true)).rejects.toThrow(/first selfie/);
+    match = true;
+    await expect(uploadPhoto(u.id, await file(), "selfie", true)).resolves.toBeTruthy();
+  });
+  it("an unsure answer (null) is not a match for full-body or outfit photos", async () => {
+    const u = await newUser();
+    await uploadPhoto(u.id, await file(), "selfie", true);
+    match = null;
+    await expect(uploadPhoto(u.id, await file(), "fullbody", false)).rejects.toThrow(/first selfie/);
+    await expect(uploadPhoto(u.id, await file(), "outfit", false)).rejects.toThrow(/first selfie/);
+    expect(await db.photo.count({ where: { userId: u.id } })).toBe(1);
   });
 });
 
@@ -164,5 +204,53 @@ describe("roast my fit", () => {
     const { charged } = await roastFit(u.id, photo.id);
     expect(charged).toBe(1);
     expect(await db.roast.count({ where: { userId: u.id } })).toBe(1);
+  });
+});
+
+describe("runAi guards", () => {
+  const msgs = () => looksMessages({ season: "x" } as never, "date-night", {}, null);
+  it("a frozen account can't use any AI call, free ones included", async () => {
+    const u = await newUser();
+    await db.user.update({ where: { id: u.id }, data: { frozenAt: new Date() } });
+    await expect(runAi({ userId: u.id, role: "moderation", reason: "x", free: true }, msgs(), (r) => r)).rejects.toBeInstanceOf(AccountFrozenError);
+  });
+
+  it("after 6 failed calls in an hour the user is paused (failed calls cost us, not them)", async () => {
+    const u = await newUser();
+    await grant(u.id, "admin_adjust", 20, `flow:${u.id}`);
+    await db.aiCall.createMany({ data: Array.from({ length: 6 }, () => ({ userId: u.id, role: "looks", status: "failed", costUsd: 0.05 })) });
+    await expect(runAi({ userId: u.id, role: "looks", reason: "x" }, msgs(), parseWith(LooksSchema))).rejects.toBeInstanceOf(GuardError);
+    expect(calls).not.toContain("looks");
+  });
+
+  it("a malformed model reply is not charged, and is recorded as a failure", async () => {
+    const u = await newUser();
+    await grant(u.id, "admin_adjust", 20, `flow:${u.id}`);
+    // The fake answers with 3 looks, which is not a valid roast: the provider is paid, the user is not.
+    await expect(runAi({ userId: u.id, role: "roast", reason: "x" }, msgs(), parseWith(RoastSchema))).rejects.toThrow();
+    expect(await getBalance(u.id)).toMatchObject({ total: 20, held: 0 });
+    expect(await db.aiCall.count({ where: { userId: u.id, status: "failed" } })).toBe(1);
+  });
+
+  it("if the provider omits the cost, the whole hold is charged instead of nothing", async () => {
+    const u = await newUser();
+    await grant(u.id, "admin_adjust", 20, `flow:${u.id}`);
+    omitCost = true;
+    const { charged } = await runAi({ userId: u.id, role: "looks", reason: "x" }, msgs(), parseWith(LooksSchema));
+    expect(charged).toBe(3);
+  });
+});
+
+describe("model-based request check", () => {
+  it("blocks a celebrity request the word list can't see, and lets a normal one through", async () => {
+    const u = await newUser();
+    await expect(assertSafeByModel(u.id, "give me an outfit as Zendaya")).rejects.toBeInstanceOf(GuardError);
+    await expect(assertSafeByModel(u.id, "Parisian café in autumn")).resolves.toBeUndefined();
+    expect(await getBalance(u.id)).toMatchObject({ total: 0 });
+  });
+  it("fails closed when the checker is down", async () => {
+    const u = await newUser();
+    omitFail = true;
+    await expect(assertSafeByModel(u.id, "cozy cabin weekend")).rejects.toMatchObject({ status: 503 });
   });
 });

@@ -86,6 +86,20 @@ describe("reserve / settle / release", () => {
     expect(await getBalance(u.id)).toEqual({ total: 1, held: 0, available: 1 });
   });
 
+  it("reserve frees the user's own crashed holds, so they aren't blocked until the daily sweep", async () => {
+    const u = await newUser(5);
+    const hold = await reserve(u.id, 5, "killed job");
+    await db.creditHold.update({ where: { id: hold }, data: { createdAt: new Date(Date.now() - 30 * 60_000) } });
+    await expect(reserve(u.id, 5, "next job")).resolves.toBeTruthy();
+    expect((await db.creditHold.findUniqueOrThrow({ where: { id: hold } })).status).toBe("released");
+  });
+
+  it("a recent hold is not touched by reserve", async () => {
+    const u = await newUser(5);
+    await reserve(u.id, 5, "running job");
+    await expect(reserve(u.id, 1, "another")).rejects.toBeInstanceOf(InsufficientCreditsError);
+  });
+
   it("releases stale holds", async () => {
     const u = await newUser(5);
     const hold = await reserve(u.id, 5, "crash");
@@ -196,6 +210,14 @@ describe("purchase limits", () => {
 describe("free trial", () => {
   const dev = () => `device_${RUN}_${Math.random()}`;
   const phone = () => `+1555${Math.floor(Math.random() * 1e7)}`;
+
+  it("a revoked party gives no voter bonus", async () => {
+    const host = await newUser();
+    const party = await db.party.create({ data: { token: `revoked_${RUN}`, userId: host.id, lookAId: "a", lookBId: "b", revokedAt: new Date() } });
+    const voter = await newUser();
+    await claimTrial(voter.id, dev(), phone(), party.token);
+    expect((await db.user.findUniqueOrThrow({ where: { id: voter.id } })).freePreviews).toBe(1);
+  });
 
   it("grants 1 free preview once per account", async () => {
     const u = await newUser();

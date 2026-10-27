@@ -23,7 +23,7 @@ import {
   type Look,
   type Quiz,
 } from "./ai";
-import { assertUnderSpendCap, GuardError, rateLimit } from "./guards";
+import { assertSafeGenerated, assertUnderSpendCap, GuardError, rateLimit } from "./guards";
 import { maybeAutoTopUp } from "./billing";
 import { creditsForCost, getBalance, InsufficientCreditsError, release, reserve, settle } from "./ledger";
 import { estimateCredits, generateVideo, type AiResult } from "./openrouter";
@@ -46,19 +46,23 @@ export async function uploadPhoto(userId: string, file: File, kind: Extract<Phot
   if (!TYPES.includes(file.type)) throw new GuardError("Please upload a JPG, PNG or WebP photo.", 400);
   if (file.size > MAX_BYTES) throw new GuardError("That photo is over 10 MB. Try a smaller one.", 400);
   // Re-encoding strips EXIF (including GPS location) and keeps model input small.
-  const bytes = await sharp(Buffer.from(await file.arrayBuffer()))
-    .rotate()
-    .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 85 })
-    .toBuffer()
-    .catch(() => {
+  const bytes = await (async () => {
+    try {
+      return await sharp(Buffer.from(await file.arrayBuffer()))
+        .rotate()
+        .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer();
+    } catch {
+      // sharp throws synchronously on an empty buffer and asynchronously on corrupt data.
       throw new GuardError("We couldn't read that image. Try a JPG.", 400);
-    });
+    }
+  })();
   const url = `data:image/jpeg;base64,${bytes.toString("base64")}`;
 
-  // Full-body and outfit photos must match the user's latest selfie so people can't style someone else.
-  const reference =
-    kind === "selfie" ? null : await db.photo.findFirst({ where: { userId, kind: "selfie", deletedAt: null }, orderBy: { createdAt: "desc" } });
+  // Every photo on an account must show the same person as the account's first (oldest kept) selfie, so people can't
+  // style someone else. shortcut: if the anchor selfie was auto-deleted after 30 days a new identity can start again; keep a face hash if that matters.
+  const reference = await db.photo.findFirst({ where: { userId, kind: "selfie", deletedAt: null }, orderBy: { createdAt: "asc" } });
   if (kind !== "selfie" && !reference) throw new GuardError("Take a selfie first so we know it's you.", 400);
 
   const { result: c } = await runAi(
@@ -71,7 +75,8 @@ export async function uploadPhoto(userId: string, file: File, kind: Extract<Phot
   if (c.faceCount !== 1) throw new GuardError("Make sure only you are in the photo.", 422);
   if (!c.clearlyAdult) throw new GuardError("Glowie is for adults 18+. Try a clearer, well-lit photo.", 422);
   if (c.nudityOrSexual) throw new GuardError("That photo can't be used. Please wear everyday clothing.", 422);
-  if (reference && c.samePersonAsReference === false) throw new GuardError("This doesn't look like the person in your selfie.", 422);
+  // Fail closed: an unsure or missing answer is not a match.
+  if (reference && c.samePersonAsReference !== true) throw new GuardError("This doesn't look like the person in your first selfie. Use photos of yourself in similar light.", 422);
 
   const coach = { score: coachScore(c), tips: c.tips, lighting: c.lighting, angle: c.angle, sharpness: c.sharpness, faceVisible: c.faceVisible };
   if (kind === "selfie" && coach.score < SELFIE_MIN_SCORE) {
@@ -172,7 +177,11 @@ const toImage = (r: AiResult) => {
 
 async function saveGenerated(userId: string, image: { type: string; bytes: Buffer }) {
   const blobPath = await putImage(`u/${userId}/gen.${image.type.split("/")[1]}`, image.bytes, image.type);
-  return db.photo.create({ data: { userId, kind: "generated", blobPath } });
+  // The account may have been deleted while the job ran: don't leave the file behind.
+  return db.photo.create({ data: { userId, kind: "generated", blobPath } }).catch(async (e) => {
+    await deleteImages([blobPath]).catch(() => {});
+    throw e;
+  });
 }
 
 /** One image edit of the user's own photo. Uses a free preview if the user has one, else credits. */
@@ -190,6 +199,7 @@ async function editImage(userId: string, reason: string, messages: Parameters<ty
 export async function makePreview(userId: string, lookId: string) {
   const { look, data } = await lookFor(userId, lookId);
   const base = await basePhoto(look.session.fullBodyId ?? look.session.selfieId);
+  assertSafeGenerated(data.hair.style, data.makeup.look, ...data.outfit.map((o) => `${o.piece} ${o.color}`));
   const { result, charged } = await editImage(userId, "Preview image", previewMessages(await dataUrl(base.blobPath), data, base.kind === "fullbody"));
   const photo = await saveGenerated(userId, result);
   await db.look.update({ where: { id: lookId }, data: { previewId: photo.id } });
@@ -206,6 +216,7 @@ const STAGES = [
 export async function startHairTryOn(userId: string, lookId: string) {
   const { look, data } = await lookFor(userId, lookId);
   const base = await basePhoto(look.session.selfieId);
+  assertSafeGenerated(data.hair.style, data.hair.salon.tone, data.hair.salon.technique, data.hair.salon.level, data.hair.growOut.week1, data.hair.growOut.month3, data.hair.growOut.month6);
   const [image, user, { available }] = await Promise.all([estimateCredits("image"), db.user.findUniqueOrThrow({ where: { id: userId } }), getBalance(userId)]);
   const needed = Math.max(0, STAGES.length - user.freePreviews) * image;
   if (available < needed) throw new InsufficientCreditsError(needed, available);
@@ -246,9 +257,13 @@ export async function startVideo(userId: string, lookId: string, appUrl: string)
     try {
       const v = await generateVideo(frame, `Subtle, natural motion: the person turns slightly toward the camera and smiles, hair moving gently. ${data.title}. Keep their face and identity exactly the same. No text.`);
       const blobPath = await putImage(`u/${userId}/video.mp4`, v.bytes, "video/mp4");
-      const video = await db.photo.create({ data: { userId, kind: "video", blobPath } });
+      const video = await db.photo.create({ data: { userId, kind: "video", blobPath } }).catch(async (e) => {
+        await deleteImages([blobPath]).catch(() => {});
+        throw e;
+      });
       await db.look.update({ where: { id: lookId }, data: { videoId: video.id, videoStatus: "ready" } });
-      const credits = await settle(holdId, creditsForCost(v.costUsd));
+      // A missing cost from the provider must not make the video free.
+      const credits = await settle(holdId, v.costUsd > 0 ? creditsForCost(v.costUsd) : VIDEO.credits);
       await db.aiCall.create({ data: { userId, role: "video", model: v.model, status: "ok", costUsd: v.costUsd, credits } });
     } catch (e) {
       console.error("[video] failed", lookId, e);

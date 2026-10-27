@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 import { auth } from "@clerk/nextjs/server";
 import { db } from "@/lib/db";
 import { getParty } from "@/lib/sharing";
-import { signedUrl } from "@/lib/storage";
+import { PUBLIC_TTL, signedUrl } from "@/lib/storage";
 import { PARTY_VOTER_FREE_PREVIEWS } from "@/lib/config";
 import type { Look } from "@/lib/ai";
 import { Ballot } from "./ballot";
@@ -23,7 +23,7 @@ export default async function PartyPage({ params }: PageProps<"/p/[token]">) {
     : null;
   const { userId } = await auth();
   const isHost = !!userId && (await db.user.findUnique({ where: { clerkId: userId } }))?.id === data.party.userId;
-  const looks = data.looks.map((l) => ({ title: (l.data as Look).title, image: signedUrl(l.previewId!) }));
+  const looks = data.looks.map((l) => ({ title: (l.data as Look).title, image: signedUrl(l.previewId!, PUBLIC_TTL) }));
 
   return (
     <main className="mx-auto max-w-md space-y-5 px-4 py-8">

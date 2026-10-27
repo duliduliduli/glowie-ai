@@ -4,6 +4,8 @@ import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getBalance } from "@/lib/ledger";
 import { signedUrl } from "@/lib/storage";
+import { liveIds } from "@/lib/photos";
+import { AiBadge } from "@/components/ai-badge";
 import { vibeLabel } from "@/lib/config";
 import type { Analysis } from "@/lib/ai";
 import { Brand } from "@/components/brand";
@@ -34,6 +36,7 @@ export default async function HomePage() {
       include: { looks: { where: { previewId: { not: null } }, take: 1, select: { previewId: true } } },
     }),
   ]);
+  const alive = await liveIds(sessions.flatMap((s) => [s.looks[0]?.previewId, s.selfieId]));
   const latest = sessions.find((s) => s.analysis)?.analysis as Analysis | undefined;
   const trial = !user.trialUsedAt;
 
@@ -117,8 +120,19 @@ export default async function HomePage() {
           <div className="no-scrollbar -mx-4 flex gap-3 overflow-x-auto px-4">
             {sessions.map((s) => (
               <Link key={s.id} href={`/session/${s.id}`} className="relative aspect-[4/5] w-40 shrink-0 overflow-hidden rounded-[24px] bg-muted">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={signedUrl(s.looks[0]?.previewId ?? s.selfieId)} alt="" className="size-full object-cover" />
+                {(() => {
+                  const pid = s.looks[0]?.previewId;
+                  const shown = pid && alive.has(pid) ? pid : alive.has(s.selfieId) ? s.selfieId : null;
+                  return shown ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={signedUrl(shown)} alt="" className="size-full object-cover" />
+                      {shown === pid ? <AiBadge /> : null}
+                    </>
+                  ) : (
+                    <div className="size-full bg-gradient-to-br from-accent-soft to-secondary" />
+                  );
+                })()}
                 <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 p-3 text-sm font-semibold text-white">{vibeLabel(s.vibe)}</span>
               </Link>
             ))}

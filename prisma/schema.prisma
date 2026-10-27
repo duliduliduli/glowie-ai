@@ -36,6 +36,7 @@ model User {
   parties  Party[]
   roasts   Roast[]
   links    ShareLink[]
+  pending  PendingCheckout[]
 }
 
 enum LedgerType {
@@ -129,6 +130,7 @@ model StyleSession {
   status      String    @default("pending") // pending | analyzing | ready | failed
   free        Boolean   @default(false) // paid for by the free trial
   createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @default(now()) @updatedAt
   looks       Look[]
 
   @@index([userId, createdAt])
@@ -222,4 +224,16 @@ model Roast {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// A Stripe Checkout the user opened but hasn't paid yet. Counts toward the new-account caps so
+// opening several checkouts in parallel can't get around them. Removed on completion or expiry.
+model PendingCheckout {
+  id        String   @id // Stripe session id (a temporary id until Stripe answers)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  usdCents  Int
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

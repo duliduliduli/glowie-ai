@@ -107,7 +107,15 @@ export async function syncModelPrices() {
   const found = data.filter((m) => wanted.has(m.id));
   for (const m of found) {
     const n = (k: string) => Number(m.pricing[k] ?? 0) || 0;
-    const price = { promptUsd: n("prompt"), completionUsd: n("completion"), imageInputUsd: n("image"), imageOutputUsd: n("image_output") };
+    const old = await db.modelPrice.findUnique({ where: { model: m.id } });
+    // A field that vanishes or reads 0 would shrink every hold (and make us eat the cost), so keep the last known price.
+    const keep = (next: number, prev?: number) => (next > 0 || !prev ? next : prev);
+    const price = {
+      promptUsd: keep(n("prompt"), old?.promptUsd),
+      completionUsd: keep(n("completion"), old?.completionUsd),
+      imageInputUsd: keep(n("image"), old?.imageInputUsd),
+      imageOutputUsd: keep(n("image_output"), old?.imageOutputUsd),
+    };
     await db.modelPrice.upsert({ where: { model: m.id }, create: { model: m.id, ...price }, update: price });
   }
   return { updated: found.length, missing: [...wanted].filter((id) => !found.some((m) => m.id === id)) };
@@ -126,12 +134,16 @@ export async function openRouterBalance() {
  * (we pass a short-lived signed URL). Tries each configured model once; polls until done.
  */
 export async function generateVideo(imageUrl: string, prompt: string) {
+  // The route is killed at 300s, so give up well before that (releasing the hold) instead of being cut off mid-job.
+  const deadline = Date.now() + 200_000;
   let last: unknown;
   for (const m of VIDEO.models) {
+    if (Date.now() > deadline) break;
     try {
       const res = await fetch(`${API}/videos`, {
         method: "POST",
         headers: headers(),
+        signal: AbortSignal.timeout(30_000),
         body: JSON.stringify({
           model: m.id,
           prompt,
@@ -144,11 +156,11 @@ export async function generateVideo(imageUrl: string, prompt: string) {
       });
       if (!res.ok) throw new AiError(`OpenRouter video ${res.status}: ${(await res.text()).slice(0, 300)}`);
       const job = await res.json();
-      for (let i = 0; i < 48; i++) {
+      while (Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 5000));
-        const s = await fetch(`${API}/videos/${job.id}`, { headers: headers(), cache: "no-store" }).then((r) => r.json());
+        const s = await fetch(`${API}/videos/${job.id}`, { headers: headers(), cache: "no-store", signal: AbortSignal.timeout(30_000) }).then((r) => r.json());
         if (s.status === "completed") {
-          const file = await fetch(s.unsigned_urls[0], { headers: headers() });
+          const file = await fetch(s.unsigned_urls[0], { headers: headers(), signal: AbortSignal.timeout(60_000) });
           if (!file.ok) throw new AiError(`Video download ${file.status}`);
           return { bytes: Buffer.from(await file.arrayBuffer()), costUsd: Number(s.usage?.cost ?? 0), model: m.id };
         }
@@ -160,5 +172,5 @@ export async function generateVideo(imageUrl: string, prompt: string) {
       last = e;
     }
   }
-  throw last;
+  throw last ?? new AiError("Video timed out");
 }

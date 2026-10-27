@@ -20,15 +20,16 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
 
   const go = async (f: File) => {
     try {
+      if (f.size > 10 * 1024 * 1024) throw new Error("That photo is over 10 MB. Try a smaller one.");
       setBusy("Checking your photo...");
       const form = new FormData();
       form.set("file", f);
       form.set("kind", "outfit");
-      const up = await apiFetch("/api/photos", { method: "POST", body: form }).then(async (r) => ({ ok: r.ok, data: await r.json() }));
+      const up = await apiFetch("/api/photos", { method: "POST", body: form }).then(async (r) => ({ ok: r.ok, data: await r.json().catch(() => ({ error: "Upload failed. Please try again." })) }));
       if (!up.ok) throw new Error(up.data.error);
       setBusy("Sharpening our wit...");
       const res = await apiFetch("/api/roast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ photoId: up.data.id }) });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ error: "Something went wrong. Please try again." }));
       if (!res.ok) throw new Error(data.error);
       router.refresh();
     } catch (e) {
@@ -56,7 +57,7 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
     <div className="space-y-5">
       {hasSelfie ? (
         <>
-          <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={(e) => e.target.files?.[0] && go(e.target.files[0])} />
+          <input ref={file} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) go(f); }} />
           <Button size="lg" className="w-full" disabled={!!busy} onClick={() => file.current?.click()}>
             {busy ? <><Loader2 className="animate-spin" aria-hidden /> {busy}</> : <><Flame aria-hidden /> Roast my outfit · up to {price} cr</>}
           </Button>

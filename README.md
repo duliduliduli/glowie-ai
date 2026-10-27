@@ -22,6 +22,16 @@ The full product spec is in [docs/SPEC.md](docs/SPEC.md).
 | Rate limits | Upstash Redis |
 | Email / analytics / errors | Resend, PostHog (after cookie consent), Sentry |
 
+## Testing locally without paid keys
+
+These only work outside production builds (they are ignored on Vercel, including previews):
+
+- `OPENROUTER_BASE_URL=http://localhost:4010` points AI calls at a fake OpenRouter server.
+- With no `BLOB_READ_WRITE_TOKEN`, photos are stored on disk in `.local-blobs/` (git-ignored).
+- `DEV_FAKE_PHONE=+15555550100` skips the SMS check for the free trial (use it only when your Clerk instance has no phone feature).
+
+`npm test` runs the unit and integration tests against a real Postgres (`TEST_DATABASE_URL`).
+
 ## Architecture
 
 ### Prepaid credit ledger (`src/lib/ledger.ts`)

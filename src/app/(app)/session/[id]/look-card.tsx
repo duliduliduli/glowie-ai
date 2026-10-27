@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowUpRight, Clapperboard, Clock, Heart, Link2, Loader2, RefreshCw, Scissors, Share2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
+import { AiBadge } from "@/components/ai-badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { BeforeAfterSlider } from "@/components/before-after";
@@ -36,7 +37,7 @@ const GEN_COPY = ["Trying on the outfit...", "Doing your hair...", "Blending the
 
 async function post(url: string) {
   const res = await apiFetch(url, { method: "POST" });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? "Something went wrong. You weren't charged.");
   return data;
 }
@@ -82,7 +83,9 @@ export function LookCard(p: Props) {
     try {
       await fn();
     } catch (e) {
-      toast.error((e as Error).message);
+      const msg = (e as Error).message;
+      // Out of credits is the one error with an obvious next step.
+      toast.error(msg, /need \d+ credits/.test(msg) ? { action: { label: "Add credits", onClick: () => router.push("/credits") } } : undefined);
     } finally {
       setBusy(null);
     }
@@ -136,6 +139,13 @@ export function LookCard(p: Props) {
       <div className="relative">
         {p.preview && p.before ? (
           <BeforeAfterSlider before={p.before} after={p.preview} alt={look.title} />
+        ) : p.preview ? (
+          // The original was deleted, but the preview you paid for is still yours.
+          <div className="relative aspect-[4/5] overflow-hidden rounded-[24px] bg-muted">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={p.preview} alt={`AI preview: ${look.title}`} className="size-full object-cover" />
+            <AiBadge className="left-3 top-3" />
+          </div>
         ) : (
           <div className="relative grid aspect-[4/5] place-items-center overflow-hidden rounded-[24px] bg-muted">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -237,8 +247,13 @@ export function LookCard(p: Props) {
               <DialogContent className="max-h-[90dvh] overflow-y-auto rounded-[28px]">
                 <DialogTitle className="heading">For my stylist</DialogTitle>
                 <DialogDescription>Salon-ready notes with an AI reference on your own face.</DialogDescription>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                {p.hair.stages[0]?.url ?? p.preview ? <img src={(p.hair.stages[0]?.url ?? p.preview)!} alt="Reference look" className="aspect-[4/5] w-full rounded-2xl object-cover" /> : null}
+                {p.hair.stages[0]?.url ?? p.preview ? (
+                  <div className="relative">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={(p.hair.stages[0]?.url ?? p.preview)!} alt="AI reference preview of this look on you" className="aspect-[4/5] w-full rounded-2xl object-cover" />
+                    <AiBadge className="left-3 top-3" />
+                  </div>
+                ) : null}
                 <dl className="grid grid-cols-[6rem_1fr] gap-y-1.5 text-sm">
                   {Object.entries(look.hair.salon).map(([k, v]) => (
                     <div key={k} className="contents"><dt className="font-semibold capitalize">{k}</dt><dd>{v}</dd></div>
@@ -290,8 +305,11 @@ function RegretSimulator({ look, stages, status, price, blocked, busy, onStart }
         <div className="grid grid-cols-3 gap-2">
           {stages.map((s) => (
             <figure key={s.label} className="space-y-1">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={s.url} alt={`AI preview at ${s.label}`} className="aspect-[4/5] w-full rounded-xl object-cover" />
+              <div className="relative">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={s.url} alt={`AI preview at ${s.label}`} className="aspect-[4/5] w-full rounded-xl object-cover" />
+                <AiBadge />
+              </div>
               <figcaption className="text-center text-xs font-semibold">{s.label}</figcaption>
             </figure>
           ))}
@@ -321,7 +339,10 @@ function VideoClip({ src }: { src: string }) {
     return () => { if (u) URL.revokeObjectURL(u); };
   }, [src]);
   return url ? (
-    <video src={url} autoPlay loop muted playsInline controls className="aspect-[3/4] w-full rounded-[24px] bg-black object-cover" aria-label="AI animation of this look" />
+    <div className="relative">
+      <video src={url} autoPlay loop muted playsInline controls className="aspect-[3/4] w-full rounded-[24px] bg-black object-cover" aria-label="AI animation of this look" />
+      <AiBadge className="left-3 top-3" />
+    </div>
   ) : (
     <div className="grid aspect-[3/4] place-items-center rounded-[24px] bg-muted"><Loader2 className="animate-spin" aria-hidden /></div>
   );

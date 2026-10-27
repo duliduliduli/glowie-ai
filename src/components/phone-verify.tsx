@@ -51,6 +51,10 @@ export function PhoneVerify({ onVerified }: { onVerified: () => void }) {
         <>
           <Input inputMode="numeric" autoComplete="one-time-code" placeholder="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} className="h-11" aria-label="Verification code" />
           <Button className="w-full" disabled={busy || code.length < 6} onClick={verify}>Verify</Button>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="secondary" disabled={busy} onClick={() => run(async () => { await pending.prepareVerification(); toast.success("New code sent"); })}>Resend code</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => { setPending(null); setCode(""); }}>Change number</Button>
+          </div>
         </>
       ) : (
         <>

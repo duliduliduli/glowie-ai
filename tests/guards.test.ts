@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertSafePrompt } from "@/lib/guards";
+import { assertSafeGenerated, assertSafePrompt, assertUnderSpendCap, GuardError } from "@/lib/guards";
 import { signedUrl, verifySignature } from "@/lib/storage";
 import { parseJson, estimateCredits } from "@/lib/openrouter";
 import { pieceBudget, shopLinks } from "@/lib/shop";
@@ -12,6 +12,32 @@ describe("custom prompt safety", () => {
   });
   it.each(["Parisian café in autumn", "90s minimalism with gold jewellery", "cozy cabin weekend"])("allows %s", (p) => {
     expect(() => assertSafePrompt(p)).not.toThrow();
+  });
+});
+
+describe("safety filter: bypasses and false positives", () => {
+  it.each([
+    "n.u.d.e photoshoot", "ｎｕｄｅ", "nu\u200Bde", "resembling Beyonce", "bikini shoot", "underwear only", "shirtless", "make me 14", "make me look like a kid",
+    "children's look", "change my race", "paler skin", "make me look more asian", "sexier please", "underage", "undressed", "nudes",
+  ])("blocks %s", (p) => {
+    expect(() => assertSafePrompt(p)).toThrow();
+  });
+  it.each([
+    "race day at Ascot", "minimal makeup, natural skin tone match", "brunch with my 14 cousins", "cozy cabin weekend", "Parisian café in autumn",
+    "my sister's wedding in Lagos", "black tie dinner", "white linen dress",
+  ])("allows %s", (p) => {
+    expect(() => assertSafePrompt(p)).not.toThrow();
+  });
+  it("empty and missing text is fine, very long text is not", () => {
+    expect(() => assertSafePrompt(undefined)).not.toThrow();
+    expect(() => assertSafePrompt("x".repeat(301))).toThrow();
+  });
+  it("generated look text: blocks sexual or minor terms, allows normal styling words", () => {
+    expect(() => assertSafeGenerated("Bouncy blowout", "soft glam", "silk slip dress berry")).not.toThrow();
+    expect(() => assertSafeGenerated("matches your skin tone", "kid leather gloves", "race day hat")).not.toThrow();
+    expect(() => assertSafeGenerated("Long layers", "lingerie set")).toThrow();
+    expect(() => assertSafeGenerated("nude lip, sheer bra")).toThrow();
+    expect(() => assertSafeGenerated("look for a teen")).toThrow();
   });
 });
 
@@ -82,5 +108,28 @@ describe("selfie coach", () => {
     expect(coachScore({ lighting: 10, faceVisible: 10, angle: 10, sharpness: 10 })).toBe(100);
     expect(coachScore({ lighting: 3, faceVisible: 8, angle: 8, sharpness: 8 })).toBe(65);
     expect(coachScore({ lighting: 2, faceVisible: 3, angle: 9, sharpness: 9 })).toBeLessThan(55);
+  });
+});
+
+describe("daily spend circuit breaker", () => {
+  it("stops all AI calls with a 503 once today's provider spend reaches the cap, and resumes under it", async () => {
+    const { db } = await import("@/lib/db");
+    const u = await db.user.create({ data: { clerkId: `cap_${Date.now()}`, email: "cap@x.test", referralCode: `CAP${Date.now()}` } });
+    const before = process.env.DAILY_SPEND_CAP_USD;
+    try {
+      const { _sum } = await db.aiCall.aggregate({ where: { createdAt: { gte: new Date(new Date().setUTCHours(0, 0, 0, 0)) } }, _sum: { costUsd: true } });
+      const spent = _sum.costUsd ?? 0;
+      process.env.DAILY_SPEND_CAP_USD = String(spent + 5);
+      await expect(assertUnderSpendCap()).resolves.toBeUndefined();
+      await db.aiCall.create({ data: { userId: u.id, role: "image", status: "ok", costUsd: 5.01 } });
+      await expect(assertUnderSpendCap()).rejects.toMatchObject({ status: 503 });
+      await expect(assertUnderSpendCap()).rejects.toBeInstanceOf(GuardError);
+      process.env.DAILY_SPEND_CAP_USD = String(spent + 50);
+      await expect(assertUnderSpendCap()).resolves.toBeUndefined();
+    } finally {
+      if (before === undefined) delete process.env.DAILY_SPEND_CAP_USD;
+      else process.env.DAILY_SPEND_CAP_USD = before;
+      await db.aiCall.deleteMany({ where: { userId: u.id } });
+    }
   });
 });

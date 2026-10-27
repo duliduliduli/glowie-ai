@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { db } from "@/lib/db";
 import { releaseStaleHolds } from "@/lib/ledger";
 import { openRouterBalance, syncModelPrices } from "@/lib/openrouter";
@@ -37,9 +38,10 @@ async function checkOpenRouterBalance() {
 }
 
 export async function GET(req: Request) {
-  if (!process.env.CRON_SECRET || req.headers.get("authorization") !== `Bearer ${process.env.CRON_SECRET}`) {
-    return new Response("Unauthorized", { status: 401 });
-  }
+  const secret = process.env.CRON_SECRET;
+  const given = Buffer.from(req.headers.get("authorization") ?? "");
+  const want = Buffer.from(`Bearer ${secret}`);
+  if (!secret || given.length !== want.length || !timingSafeEqual(given, want)) return new Response("Unauthorized", { status: 401 });
   const steps = { prices: syncModelPrices, staleHolds: releaseStaleHolds, expiredPhotos: deleteExpiredOriginals, openRouter: checkOpenRouterBalance };
   const summary: Record<string, unknown> = {};
   for (const [name, run] of Object.entries(steps)) {

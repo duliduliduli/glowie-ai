@@ -37,12 +37,13 @@ const HIGHLIGHTS = ["Eyes", "Lips", "Cheekbones", "Hair", "Smile", "Shoulders", 
 const STEPS = ["Selfie", "Full body", "Vibe", "About you", "Review"];
 
 async function upload(blob: Blob, kind: "selfie" | "fullbody", fromCamera: boolean): Promise<Photo> {
+  if (blob.size > 10 * 1024 * 1024) throw new UploadError("That photo is over 10 MB. Try a smaller one.");
   const form = new FormData();
   form.set("file", blob, "photo.jpg");
   form.set("kind", kind);
   form.set("fromCamera", fromCamera ? "1" : "0");
   const res = await apiFetch("/api/photos", { method: "POST", body: form });
-  const data = await res.json();
+  const data = await res.json().catch(() => ({ error: "Upload failed. Please try again." }));
   if (!res.ok) throw new UploadError(data.error ?? "Upload failed", data.coach);
   return data;
 }
@@ -60,7 +61,10 @@ function Chip({ on, children, onClick }: { on: boolean; children: React.ReactNod
   );
 }
 
-export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial, phoneVerified, turnstileSiteKey }: Props) {
+export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial: trialProp, phoneVerified, turnstileSiteKey }: Props) {
+  // Becomes false if the server says the trial was already used (same device or phone), so the credits path appears.
+  const [trial, setTrial] = useState(trialProp);
+  const [tsKey, setTsKey] = useState(0);
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState<string | null>(null);
@@ -122,12 +126,17 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial,
           turnstileToken: token,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({ error: "Something went wrong. Please try again." }));
       if (data.code === "phone_required") setPhoneOk(false);
       if (!res.ok) throw new Error(data.error);
       router.push(`/session/${data.id}`);
     } catch (e) {
-      toast.error((e as Error).message || "Something went wrong");
+      const msg = (e as Error).message || "Something went wrong";
+      if (/free trial has already been used/.test(msg)) setTrial(false);
+      // A Turnstile token works once; get a fresh challenge for the next try.
+      setToken(null);
+      setTsKey((k) => k + 1);
+      toast.error(msg);
       setBusy(null);
     }
   };
@@ -184,7 +193,7 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial,
               ) : (
                 <Camera onCapture={(b) => doUpload(b, "selfie", true)} onUnavailable={onCameraError} />
               )}
-              <input ref={fileSelfie} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0], "selfie", false)} />
+              <input ref={fileSelfie} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) doUpload(f, "selfie", false); }} />
               <Button variant={cameraError ? "default" : "ghost"} size="lg" className="w-full" onClick={() => fileSelfie.current?.click()}>
                 <ImageUp aria-hidden /> Upload a photo instead
               </Button>
@@ -201,7 +210,7 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial,
                   <ImageUp className="size-12 text-muted-foreground" aria-hidden />
                 )}
               </div>
-              <input ref={fileBody} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && doUpload(e.target.files[0], "fullbody", false)} />
+              <input ref={fileBody} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) doUpload(f, "fullbody", false); }} />
               <Button size="lg" variant="white" className="w-full" onClick={() => fileBody.current?.click()}>
                 {fullBody ? "Choose a different photo" : "Add full-body photo"}
               </Button>
@@ -319,10 +328,10 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial,
                 </p>
               </div>
               {trial && !phoneOk ? <PhoneVerify onVerified={() => setPhoneOk(true)} /> : null}
-              {trial && phoneOk && turnstileSiteKey ? <Turnstile siteKey={turnstileSiteKey} onToken={setToken} /> : null}
+              {trial && phoneOk && turnstileSiteKey ? <Turnstile key={tsKey} siteKey={turnstileSiteKey} onToken={setToken} /> : null}
               {enough ? (
                 <Button size="lg" className="w-full" onClick={start} disabled={trial && (!phoneOk || (!!turnstileSiteKey && !token))}>
-                  {trial ? "Start my free glowup" : `Start · up to ${cost} credits`}
+                  {trial && cost === 0 ? "Start my free glowup" : trial ? "Start my glowup" : `Start · up to ${cost} credits`}
                 </Button>
               ) : (
                 <Button size="lg" className="w-full" asChild>

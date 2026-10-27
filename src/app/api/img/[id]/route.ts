@@ -9,5 +9,5 @@ export async function GET(req: Request, ctx: RouteContext<"/api/img/[id]">) {
   const photo = await db.photo.findUnique({ where: { id } });
   if (!photo || photo.deletedAt) return new Response("Not found", { status: 404 });
   const { bytes, contentType } = await readImage(photo.blobPath);
-  return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType, "Cache-Control": "private, max-age=3600" } });
+  return new Response(new Uint8Array(bytes), { headers: { "Content-Type": contentType, "Cache-Control": "private, max-age=300" } });
 }

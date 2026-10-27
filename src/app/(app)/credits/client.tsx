@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Gift, Share2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -25,9 +26,13 @@ export function BuyButton({ packId, label }: { packId: string; label: string }) 
 }
 
 export function PaidToast() {
+  const router = useRouter();
   useEffect(() => {
-    toast.success("Payment received. Credits appear as soon as your bank confirms, usually within seconds.");
-  }, []);
+    toast.success("Payment received. Your credits will appear in a moment.");
+    // The webhook credits the account a few seconds after Stripe redirects back, so check again.
+    const timers = [2500, 6000, 12000].map((ms) => setTimeout(() => router.refresh(), ms));
+    return () => timers.forEach(clearTimeout);
+  }, [router]);
   return null;
 }
 
@@ -38,8 +43,13 @@ export function AutoTopUp({ packId, below, packs }: { packId: string | null; bel
   const [pending, start] = useTransition();
   const save = (next: { on: boolean; pack: string; threshold: number }) =>
     start(async () => {
-      await setAutoTopUp({ packId: next.on ? next.pack : null, below: next.threshold });
-      toast.success(next.on ? "Auto top-up on" : "Auto top-up off");
+      try {
+        await setAutoTopUp({ packId: next.on ? next.pack : null, below: next.threshold });
+        toast.success(next.on ? "Auto top-up on" : "Auto top-up off");
+      } catch {
+        setOn(!next.on);
+        toast.error("Couldn't save that. Please try again.");
+      }
     });
 
   return (

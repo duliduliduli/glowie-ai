@@ -5,6 +5,7 @@ import { apiUser, verifiedPhone } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { handle } from "@/lib/http";
 import { processSession, sessionCreditEstimate } from "@/lib/flows";
+import { assertSafeByModel } from "@/lib/ai";
 import { assertSafePrompt, GuardError } from "@/lib/guards";
 import { getBalance, InsufficientCreditsError } from "@/lib/ledger";
 import { claimTrial } from "@/lib/trial";
@@ -41,14 +42,12 @@ export async function POST(req: Request) {
     if (!user) throw new GuardError("Sign in first", 401);
     if (user.frozenAt) throw new GuardError("Your account is on hold. Contact support.", 403);
     const body = Body.parse(await req.json());
-    if (body.vibe === "custom") {
-      if (!body.customPrompt?.trim()) throw new GuardError("Describe your custom vibe.", 400);
-      assertSafePrompt(body.customPrompt);
-    }
-    if (body.vibe === EVENT_VIBE) {
-      if (!body.event) throw new GuardError("Tell us about the event.", 400);
-      assertSafePrompt(body.event.description);
-    }
+    if (body.vibe === "custom" && !body.customPrompt?.trim()) throw new GuardError("Describe your custom vibe.", 400);
+    if (body.vibe === EVENT_VIBE && !body.event) throw new GuardError("Tell us about the event.", 400);
+    // Every free-text field reaches a model, so every one is checked.
+    for (const text of [body.customPrompt, body.event?.description, body.event?.location, body.quiz.occasion, body.quiz.budget, ...(body.quiz.highlight ?? [])]) assertSafePrompt(text);
+    const free = [body.vibe === "custom" ? body.customPrompt : null, body.vibe === EVENT_VIBE ? body.event?.description : null].filter(Boolean).join("\n");
+    if (free) await assertSafeByModel(user.id, free);
     const photos = await db.photo.findMany({ where: { userId: user.id, deletedAt: null, id: { in: [body.selfieId, body.fullBodyId].filter(Boolean) as string[] } } });
     const selfie = photos.find((p) => p.id === body.selfieId && p.kind === "selfie");
     if (!selfie) throw new GuardError("Selfie not found", 400);

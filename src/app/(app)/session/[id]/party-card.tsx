@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { PartyPopper, Share2 } from "lucide-react";
 import { toast } from "sonner";
+import { AiBadge } from "@/components/ai-badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { endParty, startParty } from "../../actions";
@@ -12,10 +13,15 @@ type Props = {
   parties: { id: string; url: string; tally: number[]; titles: string[] }[];
 };
 
-const send = (url: string) =>
-  navigator.share
-    ? navigator.share({ title: "Which look should I go with?", text: "Vote on my Glowie looks (no app needed):", url }).catch(() => {})
-    : navigator.clipboard.writeText(url).then(() => toast.success("Link copied"));
+// After an awaited server call iOS may refuse to open the share sheet, so every failure falls back to copying the link.
+const send = async (url: string) => {
+  try {
+    if (navigator.share) return await navigator.share({ title: "Which look should I go with?", text: "Vote on my Glowie looks (no app needed):", url });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") return;
+  }
+  await navigator.clipboard.writeText(url).then(() => toast.success("Link copied. Paste it to your friends."), () => toast(url));
+};
 
 /** Glowup Party: pick 2 previewed looks, send the link, friends vote without an account. */
 export function PartyCard({ looks, parties }: Props) {
@@ -55,8 +61,11 @@ export function PartyCard({ looks, parties }: Props) {
           <div className="grid grid-cols-3 gap-2">
             {looks.map((l) => (
               <button key={l.id} type="button" aria-pressed={picked.includes(l.id)} onClick={() => toggle(l.id)} className={cn("overflow-hidden rounded-2xl bg-card text-left", picked.includes(l.id) && "ring-3 ring-primary")}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={l.image} alt="" className="aspect-[4/5] w-full object-cover" />
+                <div className="relative">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={l.image} alt="" className="aspect-[4/5] w-full object-cover" />
+                  <AiBadge />
+                </div>
                 <span className="block truncate p-2 text-xs font-medium">{l.title}</span>
               </button>
             ))}

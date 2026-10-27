@@ -191,7 +191,7 @@ export default async function AdminPage() {
         {purchases.length === 0 ? (
           <p className="text-sm text-muted-foreground">No purchases yet.</p>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto" tabIndex={0} role="region" aria-label="Scrollable table">
             <table className="w-full text-left text-sm">
               <thead className="text-muted-foreground">
                 <tr><th className="py-1 font-medium">When</th><th className="font-medium">User</th><th className="font-medium">Pack</th><th className="text-right font-medium">Paid</th></tr>

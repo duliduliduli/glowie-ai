@@ -33,12 +33,27 @@ export async function getBalance(userId: string, tx: Tx = db) {
   return { total, held: onHold, available: total - onHold };
 }
 
+/** Holds older than this belong to a job the platform killed (functions stop at 5 minutes). */
+export const STALE_HOLD_MINUTES = 15;
+
+/** Runs `fn` in a transaction that holds this user's row lock (same lock the balance functions use). */
+export const withUserLock = <T>(userId: string, fn: (tx: Tx) => Promise<T>) =>
+  db.$transaction(async (tx) => {
+    await lockUser(tx, userId);
+    return fn(tx);
+  });
+
 /** Holds `amount` credits. Throws if the available balance can't cover it. */
 export async function reserve(userId: string, amount: number, reason: string) {
   if (!Number.isInteger(amount) || amount <= 0) throw new Error("Hold amount must be a positive integer");
   return db.$transaction(async (tx) => {
     const user = await lockUser(tx, userId);
     if (user.frozenAt) throw new AccountFrozenError();
+    // A crashed job must not block its owner until the daily sweep.
+    await tx.creditHold.updateMany({
+      where: { userId, status: "active", createdAt: { lt: new Date(Date.now() - STALE_HOLD_MINUTES * 60_000) } },
+      data: { status: "released", closedAt: new Date() },
+    });
     const { available } = await getBalance(userId, tx);
     if (available < amount) throw new InsufficientCreditsError(amount, available);
     const hold = await tx.creditHold.create({ data: { userId, amount, reason } });
@@ -126,7 +141,7 @@ export async function clawback(userId: string, type: LedgerType, max: number, id
 }
 
 /** Releases holds left behind by crashed requests. */
-export async function releaseStaleHolds(olderThanMinutes = 15) {
+export async function releaseStaleHolds(olderThanMinutes = STALE_HOLD_MINUTES) {
   const r = await db.creditHold.updateMany({
     where: { status: "active", createdAt: { lt: new Date(Date.now() - olderThanMinutes * 60_000) } },
     data: { status: "released", closedAt: new Date() },

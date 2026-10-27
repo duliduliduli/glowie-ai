@@ -19,7 +19,7 @@ export function Ballot({ token, looks, tally, voted, isHost, bonus }: Props) {
   const pick = (choice: 0 | 1) =>
     start(async () => {
       const r = await vote(token, choice);
-      if (r.error) toast.error(r.error);
+      if ("error" in r && r.error) toast.error(r.error);
       else setMine(choice);
     });
 

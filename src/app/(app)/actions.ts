@@ -6,12 +6,14 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { clerkClient } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { Prisma } from "@/generated/prisma/client";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { createCheckout } from "@/lib/billing";
-import { deletePhotos, processSession } from "@/lib/flows";
+import { deletePhotos, processSession, stale } from "@/lib/flows";
 import { rateLimit } from "@/lib/guards";
 import { deleteImages } from "@/lib/storage";
+import { stripe } from "@/lib/stripe";
 import { getPack } from "@/lib/config";
 import { createParty, shareLink } from "@/lib/sharing";
 import { GuardError } from "@/lib/guards";
@@ -68,10 +70,20 @@ export async function toggleFavorite(lookId: string) {
 
 export async function retrySession(sessionId: string) {
   const user = await requireUser();
-  await rateLimit("ai", user.id);
-  const r = await db.styleSession.updateMany({ where: { id: sessionId, userId: user.id, status: "failed" }, data: { status: "analyzing" } });
+  try {
+    await rateLimit("ai", user.id);
+  } catch (e) {
+    if (e instanceof GuardError) return { error: e.message };
+    throw e;
+  }
+  // Failed, or stuck because the function that was running it was killed.
+  const r = await db.styleSession.updateMany({
+    where: { id: sessionId, userId: user.id, OR: [{ status: "failed" }, { status: { in: ["analyzing", "pending"] }, updatedAt: { lt: stale() } }] },
+    data: { status: "analyzing" },
+  });
   if (r.count) after(() => processSession(sessionId));
   revalidatePath(`/session/${sessionId}`);
+  return {};
 }
 
 export async function buyPack(packId: string) {
@@ -105,6 +117,14 @@ export async function setDeleteImmediately(on: boolean) {
 export async function deleteAllPhotos() {
   const user = await requireUser();
   const n = await deletePhotos({ userId: user.id });
+  // Public links and parties point at those photos, and roast cards are nothing without theirs.
+  await Promise.all([
+    db.shareLink.updateMany({ where: { userId: user.id }, data: { revokedAt: new Date() } }),
+    db.party.updateMany({ where: { userId: user.id }, data: { revokedAt: new Date() } }),
+    db.roast.deleteMany({ where: { userId: user.id } }),
+    // The previews, hair stages and videos those looks pointed at are gone too.
+    db.look.updateMany({ where: { session: { userId: user.id } }, data: { previewId: null, videoId: null, videoStatus: null, hairStatus: null, hairStages: Prisma.DbNull } }),
+  ]);
   revalidatePath("/", "layout");
   return n;
 }
@@ -117,6 +137,8 @@ export async function deleteAccount(confirmation: string) {
   await deleteImages(photos.map((p) => p.blobPath));
   await db.trialClaim.updateMany({ where: { userId: user.id }, data: { userId: "deleted" } }); // keep device hash so the free trial can't be re-farmed
   await db.user.delete({ where: { id: user.id } });
+  // Best effort: Stripe keeps the payment records it must keep, but the customer profile goes.
+  if (user.stripeCustomerId && process.env.STRIPE_SECRET_KEY) await stripe().customers.del(user.stripeCustomerId).catch((e) => console.warn("[delete] stripe customer", e));
   await (await clerkClient()).users.deleteUser(user.clerkId);
   redirect("/");
 }

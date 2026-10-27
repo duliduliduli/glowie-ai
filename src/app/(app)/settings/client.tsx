@@ -17,7 +17,7 @@ export function DeleteImmediately({ on }: { on: boolean }) {
         <span className="block font-medium">Delete originals right after my looks are ready</span>
         <span className="text-muted-foreground">You won&apos;t be able to make new previews from that session.</span>
       </span>
-      <Switch checked={checked} disabled={pending} onCheckedChange={(v) => { setChecked(v); start(() => setDeleteImmediately(v)); }} />
+      <Switch checked={checked} disabled={pending} onCheckedChange={(v) => { setChecked(v); start(async () => { try { await setDeleteImmediately(v); } catch { setChecked(!v); toast.error("Couldn't save that. Please try again."); } }); }} />
     </label>
   );
 }

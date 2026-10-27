@@ -15,7 +15,9 @@ export async function POST(req: Request) {
     // Photo checks are free, but only for people who can actually use them (trial left or credits).
     const trial = !user.trialUsedAt || user.freePreviews > 0;
     if (!trial && (await getBalance(user.id)).available < 1) throw new GuardError("Add credits to upload a new photo.", 402);
-    const form = await req.formData();
+    const form = await req.formData().catch(() => {
+      throw new GuardError("That photo is too large or couldn't be read. Try a smaller one.", 413);
+    });
     const file = form.get("file");
     const kind = form.get("kind");
     if (!(file instanceof File) || (kind !== "selfie" && kind !== "fullbody" && kind !== "outfit")) throw new GuardError("Invalid upload", 400);

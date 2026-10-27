@@ -3,6 +3,8 @@ import { Heart } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { signedUrl } from "@/lib/storage";
+import { liveIds } from "@/lib/photos";
+import { AiBadge } from "@/components/ai-badge";
 import { vibeLabel } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/page-header";
@@ -22,10 +24,23 @@ export default async function LookbookPage({ searchParams }: PageProps<"/lookboo
     }),
   ]);
 
-  const tile = (href: string, photoId: string, title: string, sub: string, key: string, fav?: boolean) => (
+  const alive = await liveIds([...favorites.flatMap((l) => [l.previewId, l.session.selfieId]), ...sessions.flatMap((s) => [s.looks[0]?.previewId, s.selfieId])]);
+  const label: Record<string, string> = { analyzing: "in progress", pending: "in progress", previewing: "in progress", failed: "didn't finish" };
+
+  const tile = (href: string, previewId: string | null | undefined, selfieId: string, title: string, sub: string, key: string, fav?: boolean) => (
     <Link key={key} href={href} className="relative aspect-[4/5] overflow-hidden rounded-[24px] bg-muted">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={signedUrl(photoId)} alt="" className="size-full object-cover" />
+      {previewId && alive.has(previewId) ? (
+        <>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={signedUrl(previewId)} alt="" className="size-full object-cover" />
+          <AiBadge className="left-3 top-3" />
+        </>
+      ) : alive.has(selfieId) ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={signedUrl(selfieId)} alt="" className="size-full object-cover" />
+      ) : (
+        <div className="size-full bg-gradient-to-br from-accent-soft to-secondary" />
+      )}
       {fav ? <Heart className="absolute right-3 top-3 size-5 fill-white text-white drop-shadow" aria-hidden /> : null}
       <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent p-3 pt-10 text-white">
         <p className="truncate text-sm font-semibold">{title}</p>
@@ -54,7 +69,7 @@ export default async function LookbookPage({ searchParams }: PageProps<"/lookboo
         favorites.length ? (
           <div className="grid grid-cols-2 gap-3">
             {favorites.map((l) =>
-              tile(`/session/${l.sessionId}`, l.previewId ?? l.session.selfieId, (l.data as { title: string }).title, vibeLabel(l.session.vibe), l.id, true),
+              tile(`/session/${l.sessionId}`, l.previewId, l.session.selfieId, (l.data as { title: string }).title, vibeLabel(l.session.vibe), l.id, true),
             )}
           </div>
         ) : (
@@ -65,9 +80,10 @@ export default async function LookbookPage({ searchParams }: PageProps<"/lookboo
           {sessions.map((s) =>
             tile(
               `/session/${s.id}`,
-              s.looks[0]?.previewId ?? s.selfieId,
+              s.looks[0]?.previewId,
+              s.selfieId,
               vibeLabel(s.vibe),
-              `${s.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${s.status === "ready" ? `${s._count.looks} looks` : s.status}`,
+              `${s.createdAt.toLocaleDateString("en-US", { month: "short", day: "numeric" })} · ${s.status === "ready" ? `${s._count.looks} looks` : (label[s.status] ?? s.status)}`,
               s.id,
             ),
           )}

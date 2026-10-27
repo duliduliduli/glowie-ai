@@ -12,7 +12,7 @@ const hash = (s: string) => createHash("sha256").update(s).digest("hex");
  */
 export async function claimTrial(userId: string, deviceId: string, verifiedPhone: string, partyToken?: string | null) {
   const party = partyToken ? await db.party.findUnique({ where: { token: partyToken } }) : null;
-  const bonus = party && party.userId !== userId ? PARTY_VOTER_FREE_PREVIEWS : 0;
+  const bonus = party && !party.revokedAt && party.userId !== userId ? PARTY_VOTER_FREE_PREVIEWS : 0;
   const phone = verifiedPhone.replace(/[^\d+]/g, "");
   await db.$transaction(async (tx) => {
     const used = await tx.user.updateMany({

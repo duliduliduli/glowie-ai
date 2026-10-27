@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ChevronLeft, CloudSun, Luggage } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { stale } from "@/lib/flows";
+import { liveIds } from "@/lib/photos";
 import { db } from "@/lib/db";
 import { signedUrl } from "@/lib/storage";
 import { estimateCredits } from "@/lib/openrouter";
@@ -22,11 +23,13 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
   const { id } = await params;
   const s = await db.styleSession.findFirst({ where: { id, userId: user.id }, include: { looks: { orderBy: { index: "asc" } } } });
   if (!s) notFound();
-  const [photos, image, parties, links] = await Promise.all([
+  const mediaIds = s.looks.flatMap((l) => [l.previewId, l.videoId, ...((l.hairStages as { photoId: string }[] | null) ?? []).map((st) => st.photoId)]);
+  const [photos, image, parties, links, alive] = await Promise.all([
     db.photo.findMany({ where: { id: { in: [s.selfieId, s.fullBodyId].filter(Boolean) as string[] }, deletedAt: null } }),
     estimateCredits("image"),
     db.party.findMany({ where: { userId: user.id, revokedAt: null, lookAId: { in: s.looks.map((l) => l.id) } }, include: { votes: { select: { choice: true } } } }),
     db.shareLink.findMany({ where: { userId: user.id, kind: "stylist", revokedAt: null, refId: { in: s.looks.map((l) => l.id) } }, select: { refId: true } }),
+    liveIds(mediaIds),
   ]);
   const shared = new Set(links.map((l) => l.refId));
   const selfie = photos.find((p) => p.id === s.selfieId);
@@ -34,7 +37,10 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
   const analysis = s.analysis as Analysis | null;
   const plan = s.extra as (EventPlan & { event: { description: string; date: string; location: string } }) | null;
   const live = (d: Date) => d > stale();
-  const previewing = s.status === "previewing" && live(s.createdAt);
+  // A job killed mid-way (the platform stops functions at 5 minutes) must not leave the user on a spinner forever.
+  const stuck = (s.status === "analyzing" || s.status === "pending") && !live(s.updatedAt);
+  const failed = s.status === "failed" || stuck;
+  const previewing = s.status === "previewing" && live(s.updatedAt);
   const busy = previewing || s.looks.some((l) => live(l.updatedAt) && (l.hairStatus === "generating" || l.videoStatus === "generating"));
   const previewBlocked = !base ? "Your original photo was deleted, so new previews aren't possible." : !selfie?.fromCamera ? "Previews need a live camera selfie. Start a new look with the camera." : null;
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
@@ -58,7 +64,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
         </div>
       </section>
 
-      {s.status === "analyzing" || s.status === "pending" ? (
+      {(s.status === "analyzing" || s.status === "pending") && !stuck ? (
         <>
           <Poller />
           <div className="space-y-3">
@@ -69,7 +75,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
       ) : null}
       {busy ? <AutoRefresh /> : null}
 
-      {s.status === "failed" ? (
+      {failed ? (
         <div className="space-y-3 rounded-[28px] bg-card p-5 shadow-sm">
           <h2 className="font-bold">That didn&apos;t work</h2>
           <p className="text-sm text-muted-foreground">The stylist hit a snag. You weren&apos;t charged for anything that failed.</p>
@@ -126,11 +132,11 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           look={LookSchema.parse(l.data)}
           before={base ? signedUrl(base.id) : null}
           selfie={selfie ? signedUrl(selfie.id) : null}
-          preview={l.previewId ? signedUrl(l.previewId) : null}
+          preview={l.previewId && alive.has(l.previewId) ? signedUrl(l.previewId) : null}
           favorite={l.favorite}
           shared={shared.has(l.id)}
-          hair={{ status: l.hairStatus === "generating" && !live(l.updatedAt) ? "failed" : l.hairStatus, stages: ((l.hairStages as { label: string; photoId: string }[] | null) ?? []).map((st) => ({ label: st.label, url: signedUrl(st.photoId) })) }}
-          video={{ status: l.videoStatus === "generating" && !live(l.updatedAt) ? "failed" : l.videoStatus, url: l.videoId ? signedUrl(l.videoId) : null }}
+          hair={{ status: l.hairStatus === "generating" && !live(l.updatedAt) ? "failed" : l.hairStatus, stages: ((l.hairStages as { label: string; photoId: string }[] | null) ?? []).filter((st) => alive.has(st.photoId)).map((st) => ({ label: st.label, url: signedUrl(st.photoId) })) }}
+          video={{ status: l.videoStatus === "generating" && !live(l.updatedAt) ? "failed" : l.videoStatus === "ready" && !(l.videoId && alive.has(l.videoId)) ? null : l.videoStatus, url: l.videoId && alive.has(l.videoId) ? signedUrl(l.videoId) : null }}
           prices={{ image, hair: image * 3, video: VIDEO.credits }}
           freePreviews={user.freePreviews}
           previewBlocked={previewBlocked}
@@ -141,7 +147,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
 
       {s.status !== "analyzing" && s.looks.length > 1 ? (
         <PartyCard
-          looks={s.looks.filter((l) => l.previewId).map((l) => ({ id: l.id, title: LookSchema.parse(l.data).title, image: signedUrl(l.previewId!) }))}
+          looks={s.looks.filter((l) => l.previewId && alive.has(l.previewId)).map((l) => ({ id: l.id, title: LookSchema.parse(l.data).title, image: signedUrl(l.previewId!) }))}
           parties={parties.map((p) => ({ id: p.id, url: `${appUrl}/p/${p.token}`, tally: [0, 1].map((c) => p.votes.filter((v) => v.choice === c).length), titles: [p.lookAId, p.lookBId].map((lid) => LookSchema.parse(s.looks.find((l) => l.id === lid)!.data).title) }))}
         />
       ) : null}

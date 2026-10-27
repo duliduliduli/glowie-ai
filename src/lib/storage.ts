@@ -46,6 +46,9 @@ export async function deleteImages(paths: string[]) {
   if (paths.length) await del(paths);
 }
 
+/** Public pages mint short links, so turning a share link off takes effect within minutes. */
+export const PUBLIC_TTL = 300;
+
 export function signedUrl(photoId: string, ttlSeconds = 3600) {
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
   return `/api/img/${photoId}?exp=${exp}&sig=${sign(photoId, exp)}`;

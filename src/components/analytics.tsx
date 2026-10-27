@@ -18,7 +18,10 @@ function PageViews() {
   const pathname = usePathname();
   const search = useSearchParams();
   useEffect(() => {
-    posthog.capture("$pageview", { $current_url: window.location.href });
+    // /c/<token> and /p/<token> are bearer links: send the route, not the token.
+    const url = new URL(window.location.href);
+    url.pathname = url.pathname.replace(/^\/(c|p)\/[^/]+/, "/$1/[token]");
+    posthog.capture("$pageview", { $current_url: url.toString() });
   }, [pathname, search]);
   return null;
 }
