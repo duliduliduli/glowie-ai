@@ -261,9 +261,9 @@ export async function startVideo(userId: string, lookId: string, appUrl: string)
         await deleteImages([blobPath]).catch(() => {});
         throw e;
       });
-      await db.look.update({ where: { id: lookId }, data: { videoId: video.id, videoStatus: "ready" } });
-      // A missing cost from the provider must not make the video free.
+      // Charge first, then show it: a failed settle must not leave a free, visible video. A missing cost charges the full price.
       const credits = await settle(holdId, v.costUsd > 0 ? creditsForCost(v.costUsd) : VIDEO.credits);
+      await db.look.update({ where: { id: lookId }, data: { videoId: video.id, videoStatus: "ready" } });
       await db.aiCall.create({ data: { userId, role: "video", model: v.model, status: "ok", costUsd: v.costUsd, credits } });
     } catch (e) {
       console.error("[video] failed", lookId, e);

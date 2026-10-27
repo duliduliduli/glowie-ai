@@ -20,7 +20,9 @@ const { db } = await import("@/lib/db");
 const { grant, getBalance } = await import("@/lib/ledger");
 const { claimTrial } = await import("@/lib/trial");
 const { uploadPhoto, processSession, makePreview, roastFit } = await import("@/lib/flows");
-const { assertSafeByModel, runAi, LooksSchema, RoastSchema, looksMessages, parseWith } = await import("@/lib/ai");
+const { assertSafeByModel, runAi, LooksSchema, RoastSchema, looksMessages, roastMessages, parseWith } = await import("@/lib/ai");
+const look0 = () => look(0);
+const roastMsgs = () => roastMessages("data:image/jpeg;base64,AAAA");
 const { AccountFrozenError } = await import("@/lib/ledger");
 const { GuardError } = await import("@/lib/guards");
 
@@ -50,6 +52,8 @@ const look = (i: number) => ({
 
 let omitCost = false;
 let omitFail = false;
+let emptyImages = 0;
+let lastBody: Record<string, unknown> = {};
 let match: boolean | null | "auto" = "auto";
 let photoCheck = { lighting: 9, angle: 9, sharpness: 9, faceVisible: 9 };
 const calls: string[] = [];
@@ -63,8 +67,14 @@ vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
   const reply = (content: unknown, cost: number, images?: string[]) =>
     Response.json({ model: body.models?.[0], choices: [{ message: { content: typeof content === "string" ? content : JSON.stringify(content), images } }], usage: omitCost ? {} : { cost } });
   if (!String(url).includes("/chat/completions")) throw new Error(`unexpected fetch ${url}`);
+  lastBody = body;
   if (body.modalities) {
     calls.push("image");
+    // Provider billed us but returned no image (e.g. a content filter).
+    if (emptyImages > 0) {
+      emptyImages--;
+      return reply("", 0.08, [] as never);
+    }
     return reply("", 0.08, [{ image_url: { url: `data:image/jpeg;base64,${tinyJpeg}` } }] as never);
   }
   if (sys.includes("text safety checker")) {
@@ -87,6 +97,14 @@ vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
   return reply("```json\n" + JSON.stringify({ looks: [0, 1, 2].map(look) }) + "\n```", 0.05);
 });
 
+for (const [model, promptUsd, completionUsd, imageOutputUsd] of [
+  ["google/gemini-4-argon", 2e-6, 1e-5, 0], ["openai/gpt-5.4-mini", 7.5e-7, 4.5e-6, 0],
+  ["google/gemini-3.1-flash-image", 5e-7, 3e-6, 6e-5], ["bytedance-seed/seedream-5-0-flash", 0, 0, 4.31e-6],
+] as const) {
+  const data = { promptUsd, completionUsd, imageInputUsd: 0, imageOutputUsd };
+  await db.modelPrice.upsert({ where: { model }, create: { model, ...data }, update: data });
+}
+
 let n = 0;
 async function newUser() {
   n++;
@@ -97,6 +115,7 @@ const file = async () => new File([await sharp({ create: { width: 64, height: 64
 beforeEach(() => {
   omitCost = false;
   omitFail = false;
+  emptyImages = 0;
   match = "auto";
   calls.length = 0;
   photoCheck = { lighting: 9, angle: 9, sharpness: 9, faceVisible: 9 };
@@ -252,5 +271,31 @@ describe("model-based request check", () => {
     const u = await newUser();
     omitFail = true;
     await expect(assertSafeByModel(u.id, "cozy cabin weekend")).rejects.toMatchObject({ status: 503 });
+  });
+});
+
+describe("provider cost accounting", () => {
+  it("a billed-but-empty image is counted toward the spend cap, but the user pays only for the image they got", async () => {
+    const u = await newUser();
+    await grant(u.id, "admin_adjust", 30, `flow:${u.id}`);
+    const { photo } = await uploadPhoto(u.id, await file(), "selfie", true);
+    const s = await db.styleSession.create({ data: { userId: u.id, selfieId: photo.id, vibe: "old-money", quiz: {}, status: "ready" } });
+    const look = await db.look.create({ data: { sessionId: s.id, index: 0, data: look0() } });
+    emptyImages = 1;
+    const { charged } = await makePreview(u.id, look.id);
+    expect(charged).toBe(3); // one good image at $0.08 x3
+    const row = await db.aiCall.findFirstOrThrow({ where: { userId: u.id, role: "image" } });
+    expect(row.costUsd).toBeCloseTo(0.16); // the wasted $0.08 is still our spend
+  });
+
+  it("requests carry a price ceiling from the cached prices so a pricier provider can't be used", async () => {
+    const u = await newUser();
+    await grant(u.id, "admin_adjust", 20, `flow:${u.id}`);
+    await runAi({ userId: u.id, role: "roast", reason: "x" }, roastMsgs(), parseWith(RoastSchema));
+    const p = lastBody.provider as { data_collection: string; max_price?: { prompt: number; completion: number } };
+    expect(p.data_collection).toBe("deny");
+    // worst listed price across google/gemini-4-argon and openai/gpt-5.4-mini, x1.5, in $ per million tokens
+    expect(p.max_price?.completion).toBeCloseTo(15);
+    expect(p.max_price?.prompt).toBeCloseTo(3);
   });
 });

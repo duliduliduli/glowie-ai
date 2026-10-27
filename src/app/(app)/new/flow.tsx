@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
@@ -141,6 +141,16 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial:
     }
   };
 
+  const heading = useRef<HTMLHeadingElement>(null);
+  const firstStep = useRef(true);
+  useEffect(() => {
+    if (firstStep.current) {
+      firstStep.current = false;
+      return;
+    }
+    heading.current?.focus();
+  }, [step]);
+
   const eventOk = event.description.trim().length > 2 && !!event.date && event.location.trim().length > 1;
   const canNext = [!!selfie, true, !!vibe && (vibe !== "custom" || customPrompt.trim().length > 2) && (!isEvent || eventOk), true][step];
 
@@ -158,7 +168,7 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial:
         )}
         <div className="flex-1">
           <p className="text-xs text-muted-foreground">Step {step + 1} of {STEPS.length}</p>
-          <h1 className="heading text-xl">{STEPS[step]}</h1>
+          <h1 ref={heading} tabIndex={-1} className="heading text-xl outline-none">{STEPS[step]}</h1>
         </div>
       </div>
       <div className="mb-5 flex gap-1.5" aria-hidden>

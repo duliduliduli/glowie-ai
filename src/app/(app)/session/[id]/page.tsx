@@ -162,7 +162,7 @@ function Swatches({ colors, small }: { colors: { name: string; hex: string }[]; 
       {colors.map((c) => (
         <li key={c.hex + c.name} className="flex flex-col items-center gap-1">
           <span className={small ? "size-9 rounded-full border" : "size-12 rounded-2xl border"} style={{ background: c.hex }} />
-          <span className="max-w-16 truncate text-[11px] text-muted-foreground">{c.name}</span>
+          <span className="max-w-20 text-center text-xs leading-tight text-muted-foreground">{c.name}</span>
         </li>
       ))}
     </ul>

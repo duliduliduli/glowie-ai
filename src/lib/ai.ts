@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { db } from "./db";
-import { complete, estimateCredits, parseJson, type AiResult, type Message } from "./openrouter";
+import { AiError, complete, estimateCredits, parseJson, type AiResult, type Message } from "./openrouter";
 import { AccountFrozenError, withHold } from "./ledger";
 import { assertUnderSpendCap, GuardError, rateLimit } from "./guards";
 import { CREDIT_USD, MARKUP, vibeLabel, type ModelRole } from "./config";
@@ -112,20 +112,22 @@ export async function runAi<T>(opts: RunOpts, messages: Message[], parse: (r: Ai
       r = await complete(opts.role, messages, { json });
       // If the provider ever omits the cost, charge the hold rather than giving the work away.
       const costUsd = r.costUsd > 0 || opts.free ? r.costUsd : (hold * CREDIT_USD) / MARKUP;
-      return { result: parse(r), costUsd, model: r.model };
+      return { result: parse(r), costUsd, model: r.model, wastedUsd: r.wastedUsd };
     } catch (e) {
-      await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: r?.model, status: "failed", costUsd: r?.costUsd ?? 0, error: String(e).slice(0, 500) } });
+      // What we paid for unusable replies still counts toward the daily spend cap.
+      const spent = r ? r.costUsd + r.wastedUsd : e instanceof AiError ? e.costUsd : 0;
+      await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: r?.model, status: "failed", costUsd: spent, error: String(e).slice(0, 500) } });
       throw e;
     }
   };
   if (opts.free) {
     const out = await exec();
-    await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: out.model, status: "ok", costUsd: out.costUsd } });
+    await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: out.model, status: "ok", costUsd: out.costUsd + out.wastedUsd } });
     return { result: out.result, charged: 0 };
   }
-  let done = { model: "", costUsd: 0 };
+  let done = { model: "", costUsd: 0, wastedUsd: 0 };
   const out = await withHold(opts.userId, hold, opts.reason, async () => (done = await exec()));
-  await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: done.model, status: "ok", costUsd: done.costUsd, credits: out.charged } });
+  await db.aiCall.create({ data: { userId: opts.userId, role: opts.role, model: done.model, status: "ok", costUsd: done.costUsd + done.wastedUsd, credits: out.charged } });
   return out;
 }
 

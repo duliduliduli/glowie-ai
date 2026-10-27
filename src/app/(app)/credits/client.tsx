@@ -54,13 +54,13 @@ export function AutoTopUp({ packId, below, packs }: { packId: string | null; bel
 
   return (
     <section className="space-y-4 rounded-[24px] bg-card p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="font-bold">Auto top-up</h2>
-          <p className="text-sm text-muted-foreground">Buy a pack with your saved card when you run low.</p>
-        </div>
-        <Switch checked={on} disabled={pending} aria-label="Auto top-up" onCheckedChange={(v) => { setOn(v); save({ on: v, pack, threshold }); }} />
-      </div>
+      <label htmlFor="auto-top-up" className="flex min-h-11 cursor-pointer items-center justify-between gap-3">
+        <span>
+          <span className="block font-bold">Auto top-up</span>
+          <span className="text-sm text-muted-foreground">Buy a pack with your saved card when you run low.</span>
+        </span>
+        <Switch id="auto-top-up" checked={on} disabled={pending} onCheckedChange={(v) => { setOn(v); save({ on: v, pack, threshold }); }} />
+      </label>
       {on ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
           <label className="space-y-1">

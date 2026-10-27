@@ -31,6 +31,8 @@ export const PARTY_VOTER_FREE_PREVIEWS = 1;
 
 /** Selfie coach: photos scoring below this are sent back with tips before any credits are spent. */
 export const SELFIE_MIN_SCORE = 55;
+/** Photo checks an account gets before it has any credits (retakes included). */
+export const FREE_PHOTO_CHECKS = 12;
 
 type Usage = { promptTokens: number; completionTokens: number; imageInputs: number; imageOutputTokens: number };
 

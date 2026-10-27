@@ -14,27 +14,52 @@ const headers = () => ({
 export type Content = string | ({ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } })[];
 export type Message = { role: "system" | "user" | "assistant"; content: Content };
 
-export type AiResult = { text: string; images: string[]; costUsd: number; model: string };
+/** `wastedUsd` is what failed attempts (fallbacks, retries) cost us on the way to this result. It counts toward the spend cap, not the user's bill. */
+export type AiResult = { text: string; images: string[]; costUsd: number; model: string; wastedUsd: number };
 
-export class AiError extends Error {}
+/** `costUsd` is set when the provider billed us for a reply we couldn't use (empty image, content filter, bad JSON). */
+export class AiError extends Error {
+  constructor(message: string, public costUsd = 0) {
+    super(message);
+  }
+}
+const costOf = (e: unknown) => (e instanceof AiError ? e.costUsd : 0);
 
 async function call(role: ModelRole, messages: Message[], json: boolean): Promise<AiResult> {
   const { models } = MODELS[role];
   if (role !== "image") return request(role, models, messages, json);
   // Image models differ in output modalities, so try them one at a time instead of OpenRouter's `models` fallback.
   let last: unknown;
+  let wasted = 0;
   for (const m of models) {
     try {
-      return await request(role, [m], messages, json);
+      const r = await request(role, [m], messages, json);
+      return { ...r, wastedUsd: r.wastedUsd + wasted };
     } catch (e) {
+      wasted += costOf(e);
       last = e;
     }
   }
-  throw last;
+  throw new AiError(String((last as Error)?.message ?? last), wasted);
+}
+
+/**
+ * Price ceiling per request: 1.5x the highest listed price among these models, so OpenRouter can't route to a provider that
+ * costs more than the hold was sized for. Fields with no known price are left out (0 would block every provider).
+ */
+async function maxPrice(models: string[]) {
+  const rows = await db.modelPrice.findMany({ where: { model: { in: models } } });
+  if (rows.length !== models.length) return undefined;
+  const cap = (k: "promptUsd" | "completionUsd") => Math.max(...rows.map((r) => r[k])) * 1.5 * 1e6;
+  const out: Record<string, number> = {};
+  if (rows.every((r) => r.promptUsd > 0)) out.prompt = cap("promptUsd");
+  if (rows.every((r) => r.completionUsd > 0)) out.completion = cap("completionUsd");
+  return Object.keys(out).length ? out : undefined;
 }
 
 async function request(role: ModelRole, models: string[], messages: Message[], json: boolean): Promise<AiResult> {
   const cfg = MODELS[role];
+  const max_price = await maxPrice(models);
   const res = await fetch(`${API}/chat/completions`, {
     method: "POST",
     headers: headers(),
@@ -45,8 +70,8 @@ async function request(role: ModelRole, models: string[], messages: Message[], j
       messages,
       max_tokens: cfg.maxTokens,
       usage: { include: true },
-      // Never let providers store or train on user photos.
-      provider: { data_collection: "deny" },
+      // Never let providers store or train on user photos; never pay more than the hold assumed.
+      provider: { data_collection: "deny", ...(max_price ? { max_price } : {}) },
       // Keep thinking short so answers fit in max_tokens (and the hold).
       ...(role === "image" ? { modalities: IMAGE_ONLY_MODELS.includes(models[0]) ? ["image"] : ["image", "text"] } : { reasoning: { effort: "low" } }),
       ...(json ? { response_format: { type: "json_object" } } : {}),
@@ -54,12 +79,13 @@ async function request(role: ModelRole, models: string[], messages: Message[], j
   });
   if (!res.ok) throw new AiError(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
   const data = await res.json();
-  if (data.error) throw new AiError(`OpenRouter: ${data.error.message ?? "unknown error"}`);
+  const cost = Number(data.usage?.cost ?? 0);
+  if (data.error) throw new AiError(`OpenRouter: ${data.error.message ?? "unknown error"}`, cost);
   const msg = data.choices?.[0]?.message;
   const images: string[] = (msg?.images ?? []).map((i: { image_url: { url: string } }) => i.image_url.url);
   const text: string = typeof msg?.content === "string" ? msg.content : "";
-  if (role === "image" ? !images.length : !text) throw new AiError("Empty response from model");
-  return { text, images, costUsd: Number(data.usage?.cost ?? 0), model: data.model };
+  if (role === "image" ? !images.length : !text) throw new AiError("Empty response from model", cost);
+  return { text, images, costUsd: cost, model: data.model, wastedUsd: 0 };
 }
 
 /** One call with model fallback, retried once on failure. */
@@ -68,7 +94,12 @@ export async function complete(role: ModelRole, messages: Message[], { json = fa
     return await call(role, messages, json);
   } catch (e) {
     console.warn(`[openrouter] ${role} failed, retrying once`, e);
-    return call(role, messages, json);
+    try {
+      const r = await call(role, messages, json);
+      return { ...r, wastedUsd: r.wastedUsd + costOf(e) };
+    } catch (e2) {
+      throw new AiError(String((e2 as Error)?.message ?? e2), costOf(e) + costOf(e2));
+    }
   }
 }
 

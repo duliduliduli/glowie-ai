@@ -41,16 +41,26 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
   };
 
   const share = async (id: string, asImage: boolean) => {
-    const url = await shareCard("roast", id);
-    setLive((l) => new Set(l).add(id));
-    if (asImage) {
-      const blob = await fetch(`${url}/image`).then((r) => r.blob());
-      const f = new File([blob], "glowie-roast.png", { type: "image/png" });
-      if (navigator.canShare?.({ files: [f] })) return navigator.share({ files: [f] }).catch(() => {});
+    let url: string;
+    try {
+      url = await shareCard("roast", id);
+    } catch {
+      return toast.error("Couldn't create the link. Please try again.");
     }
-    if (navigator.share) return navigator.share({ url, title: "Roast my fit" }).catch(() => {});
-    await navigator.clipboard.writeText(url);
-    toast.success("Link copied");
+    setLive((l) => new Set(l).add(id));
+    try {
+      if (asImage) {
+        const res = await fetch(`${url}/image`);
+        if (!res.ok) throw new Error("image");
+        const f = new File([await res.blob()], "glowie-roast.png", { type: "image/png" });
+        if (navigator.canShare?.({ files: [f] })) return await navigator.share({ files: [f] });
+      }
+      if (navigator.share) return await navigator.share({ url, title: "Roast my fit" });
+    } catch (e) {
+      if ((e as Error).name === "AbortError") return;
+    }
+    // The share sheet was refused or isn't available: copy the link instead, and show it if even that fails.
+    await navigator.clipboard.writeText(url).then(() => toast.success("Link copied"), () => toast(url));
   };
 
   return (

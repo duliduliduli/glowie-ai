@@ -197,15 +197,37 @@ export function LookCard(p: Props) {
 
       <p className="text-sm"><span className="font-semibold">Why it suits you: </span>{look.whyItSuits}</p>
 
-      <div role="tablist" aria-label="Look details" className="no-scrollbar flex gap-1 overflow-x-auto rounded-full bg-background p-1">
+      <div
+        role="tablist"
+        aria-label="Look details"
+        className="no-scrollbar flex gap-1 overflow-x-auto rounded-full bg-background p-1"
+        onKeyDown={(e) => {
+          const i = TABS.indexOf(tab);
+          const next = { ArrowRight: i + 1, ArrowLeft: i - 1, Home: 0, End: TABS.length - 1 }[e.key];
+          if (next === undefined) return;
+          e.preventDefault();
+          const t = TABS[(next + TABS.length) % TABS.length];
+          setTab(t);
+          document.getElementById(`${id}-tab-${t}`)?.focus();
+        }}
+      >
         {TABS.map((t) => (
-          <button key={t} role="tab" aria-selected={tab === t} onClick={() => setTab(t)} className={cn("min-h-11 flex-1 rounded-full px-3 text-sm font-medium", tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>
+          <button
+            key={t}
+            id={`${id}-tab-${t}`}
+            role="tab"
+            aria-selected={tab === t}
+            aria-controls={`${id}-panel`}
+            tabIndex={tab === t ? 0 : -1}
+            onClick={() => setTab(t)}
+            className={cn("min-h-11 flex-1 rounded-full px-3 text-sm font-medium", tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground")}
+          >
             {t}
           </button>
         ))}
       </div>
 
-      <div role="tabpanel" className="space-y-3">
+      <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`} tabIndex={0} className="space-y-3 rounded-2xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
         {tab === "Outfit" ? (
           <>
             <label className="block rounded-2xl bg-background p-4">
@@ -321,6 +343,11 @@ function RegretSimulator({ look, stages, status, price, blocked, busy, onStart }
           <li><b>Month 6:</b> {look.hair.growOut.month6}</li>
         </ul>
       )}
+      {status === "failed" ? (
+        <p className="text-xs text-muted-foreground">
+          {stages.length ? `${stages.length} of 3 stages finished and were charged; the rest weren't. Retry makes all 3 again.` : "That didn't work and you weren't charged."}
+        </p>
+      ) : null}
       {!blocked && status !== "ready" ? (
         <Button className="w-full" onClick={onStart} disabled={busy || status === "generating"}>
           {status === "generating" ? <><Loader2 className="animate-spin" aria-hidden /> Growing it out...</> : `${status === "failed" ? "Retry" : "See it grow out on me"} · ${price ? `up to ${price} cr` : "free"}`}

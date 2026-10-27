@@ -25,7 +25,9 @@ export async function rateLimit(kind: "ai" | "upload" | "checkout" | "vote", key
     if (process.env.NODE_ENV === "production") throw new GuardError("Rate limiter not configured", 503);
     return;
   }
-  const { success } = await limiters[kind].limit(key);
+  const { success, reason } = await limiters[kind].limit(key);
+  // On a Redis timeout the library lets the request through; we'd rather ask the user to retry than run unmetered.
+  if (reason === "timeout") throw new GuardError("Glowie is busy right now. Please try again in a moment.", 503);
   if (!success) throw new GuardError("You're going a little fast. Try again in a few minutes.");
 }
 
