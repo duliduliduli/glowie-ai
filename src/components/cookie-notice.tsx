@@ -18,6 +18,12 @@ export function CookieNotice() {
     }
   }, []);
 
+  // Reserves scroll room (see globals.css) so the banner never traps the last button on a page.
+  useEffect(() => {
+    document.documentElement.toggleAttribute("data-cookie-banner", open);
+    return () => document.documentElement.removeAttribute("data-cookie-banner");
+  }, [open]);
+
   if (!open) return null;
 
   const choose = (value: "all" | "essential") => {

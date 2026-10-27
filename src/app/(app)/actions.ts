@@ -77,7 +77,11 @@ export async function retrySession(sessionId: string) {
 export async function buyPack(packId: string) {
   const user = await requireUser();
   await rateLimit("checkout", user.id);
-  const result = await createCheckout(user.id, packId, await origin());
+  // redirect() below throws by design, so only the Stripe call is guarded.
+  const result = await createCheckout(user.id, packId, await origin()).catch((e) => {
+    console.error("[checkout] failed", e);
+    return { error: "We couldn't open checkout. You weren't charged. Please try again." };
+  });
   if ("error" in result) return { error: result.error };
   redirect(result.url);
 }

@@ -15,7 +15,7 @@ const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000);
 
 function Card({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) {
   return (
-    <section className={`rounded-3xl bg-card p-5 shadow-sm ${className}`}>
+    <section className={`min-w-0 rounded-3xl bg-card p-5 shadow-sm [overflow-wrap:anywhere] ${className}`}>
       <h2 className="heading mb-3 text-sm text-muted-foreground">{title}</h2>
       {children}
     </section>
@@ -77,7 +77,7 @@ export default async function AdminPage() {
   const maxDay = Math.max(1, ...daily.map((d) => Math.max(d.revenue, d.spend)));
 
   return (
-    <main className="mx-auto grid max-w-5xl gap-4 px-4 py-6 pb-safe">
+    <main className="mx-auto grid max-w-5xl grid-cols-[minmax(0,1fr)] gap-4 px-4 py-6 pb-safe">
       <h1 className="heading text-2xl">Admin</h1>
 
       {lowBalance && (
@@ -86,7 +86,7 @@ export default async function AdminPage() {
         </div>
       )}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {periods.map((p) => (
           <Card key={p.label} title={p.label}>
             <dl className="grid grid-cols-2 gap-y-1 text-sm">
@@ -104,7 +104,7 @@ export default async function AdminPage() {
         ))}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-3">
         <Card title="Credit liability">
           <p className="text-2xl font-extrabold">{liabilityCredits.toLocaleString()} credits</p>
           <p className="text-sm text-muted-foreground">{usd(liabilityUsd)} retail · ~{usd(providerNeeded)} provider cost</p>
@@ -124,7 +124,7 @@ export default async function AdminPage() {
         </Card>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 sm:grid-cols-2">
         <Card title="Last 30 days by feature">
           <table className="w-full text-sm">
             <thead className="text-left text-muted-foreground"><tr><th>Role</th><th>Calls</th><th>Spend</th><th>Credits</th></tr></thead>
@@ -162,7 +162,7 @@ export default async function AdminPage() {
         <p className="mt-3 text-xs text-muted-foreground">Black: revenue · Rose: provider spend</p>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
         <Card title="Adjust credits">
           <AdjustForm />
         </Card>
@@ -170,13 +170,13 @@ export default async function AdminPage() {
           {frozen.length === 0 ? (
             <p className="text-sm text-muted-foreground">No frozen accounts.</p>
           ) : (
-            <ul className="grid gap-2">
+            <ul className="grid grid-cols-[minmax(0,1fr)] gap-2">
               {frozen.map((u) => (
                 <li key={u.id} className="flex items-center justify-between gap-2 text-sm">
-                  <span className="truncate">
+                  <span className="min-w-0 truncate">
                     {u.email} <span className="text-muted-foreground">· {u.frozenAt?.toLocaleDateString()}</span>
                   </span>
-                  <form action={unfreeze}>
+                  <form action={unfreeze} className="shrink-0">
                     <input type="hidden" name="userId" value={u.id} />
                     <Button type="submit" variant="outline">Unfreeze</Button>
                   </form>

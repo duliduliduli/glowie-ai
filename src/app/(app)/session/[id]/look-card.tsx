@@ -11,7 +11,8 @@ import { pieceBudget, shopLinks } from "@/lib/shop";
 import { BUDGET_TIERS } from "@/lib/config";
 import { cn } from "@/lib/utils";
 import type { Look } from "@/lib/ai";
-import { shareCard, toggleFavorite } from "../../actions";
+import { shareCard, stopSharing, toggleFavorite } from "../../actions";
+import { apiFetch } from "@/lib/api-fetch";
 
 type Props = {
   id: string;
@@ -20,6 +21,7 @@ type Props = {
   selfie: string | null;
   preview: string | null;
   favorite: boolean;
+  shared: boolean;
   hair: { status: string | null; stages: { label: string; url: string }[] };
   video: { status: string | null; url: string | null };
   prices: { image: number; hair: number; video: number };
@@ -33,7 +35,7 @@ const TABS = ["Outfit", "Hair", "Makeup", "Colours"] as const;
 const GEN_COPY = ["Trying on the outfit...", "Doing your hair...", "Blending the makeup...", "Checking the lighting..."];
 
 async function post(url: string) {
-  const res = await fetch(url, { method: "POST" });
+  const res = await apiFetch(url, { method: "POST" });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Something went wrong. You weren't charged.");
   return data;
@@ -58,6 +60,7 @@ export function LookCard(p: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Outfit");
   const [fav, setFav] = useState(p.favorite);
+  const [live, setLive] = useState(p.shared);
   const [busy, setBusy] = useState<string | null>(null);
   const [copy, setCopy] = useState(0);
   const [budget, setBudget] = useState(() => {
@@ -99,7 +102,7 @@ export function LookCard(p: Props) {
     });
   const shareStory = () =>
     run("story", async () => {
-      const res = await fetch(`/api/share/${id}`);
+      const res = await apiFetch(`/api/share/${id}`);
       if (!res.ok) throw new Error(await res.text());
       await share({ file: new File([await res.blob()], `glowie-${id}.png`, { type: "image/png" }), title: look.title });
     });
@@ -107,6 +110,7 @@ export function LookCard(p: Props) {
   const shareStylist = (asImage: boolean) =>
     run("stylist", async () => {
       const url = await shareCard("stylist", id);
+      setLive(true);
       if (!asImage) {
         await share({ url, title: "For my stylist" });
         return;
@@ -249,6 +253,12 @@ export function LookCard(p: Props) {
                 ) : (
                   <p className="text-xs text-muted-foreground">Generate the preview first to share this card.</p>
                 )}
+                {live ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl bg-background p-3 text-sm">
+                    <span>Your public link is on.</span>
+                    <Button variant="secondary" size="sm" className="h-11" onClick={() => run("stop", async () => { await stopSharing("stylist", id); setLive(false); toast.success("Link turned off"); })} disabled={!!busy}>Stop sharing</Button>
+                  </div>
+                ) : null}
               </DialogContent>
             </Dialog>
           </>

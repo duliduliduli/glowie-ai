@@ -40,6 +40,8 @@ export async function apiUser() {
 
 /** The user's verified phone number from Clerk, or null. */
 export async function verifiedPhone(clerkId: string) {
+  // Local QA only (Clerk dev instances may lack SMS). Ignored in production builds, including Vercel previews.
+  if (process.env.NODE_ENV !== "production" && process.env.DEV_FAKE_PHONE) return process.env.DEV_FAKE_PHONE;
   const u = await (await clerkClient()).users.getUser(clerkId);
   return u.phoneNumbers.find((p) => p.verification?.status === "verified")?.phoneNumber ?? null;
 }

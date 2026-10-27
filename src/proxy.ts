@@ -21,7 +21,12 @@ const isPublic = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (!isPublic(req)) await auth.protect();
+  if (!isPublic(req)) {
+    // API calls get JSON (the app reloads to renew the session); pages redirect to sign-in.
+    if (req.nextUrl.pathname.startsWith("/api/")) {
+      if (!(await auth()).userId) return NextResponse.json({ error: "Your session expired. Please refresh." }, { status: 401 });
+    } else await auth.protect();
+  }
   const res = NextResponse.next();
   // Anonymous device id, used to allow one free trial per device.
   if (!req.cookies.get("did")) {

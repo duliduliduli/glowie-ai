@@ -13,6 +13,7 @@ import { PhoneVerify } from "@/components/phone-verify";
 import { CoachCard, type Coach } from "@/components/coach-card";
 import { EVENT_VIBE, VIBES, vibeLabel } from "@/lib/config";
 import { cn } from "@/lib/utils";
+import { apiFetch } from "@/lib/api-fetch";
 
 type Photo = { id: string; url: string; fromCamera: boolean; coach: Coach };
 class UploadError extends Error {
@@ -40,7 +41,7 @@ async function upload(blob: Blob, kind: "selfie" | "fullbody", fromCamera: boole
   form.set("file", blob, "photo.jpg");
   form.set("kind", kind);
   form.set("fromCamera", fromCamera ? "1" : "0");
-  const res = await fetch("/api/photos", { method: "POST", body: form });
+  const res = await apiFetch("/api/photos", { method: "POST", body: form });
   const data = await res.json();
   if (!res.ok) throw new UploadError(data.error ?? "Upload failed", data.coach);
   return data;
@@ -107,7 +108,7 @@ export function NewLookFlow({ initialVibe, prices, balance, freePreviews, trial,
   const start = async () => {
     setBusy("Starting your session...");
     try {
-      const res = await fetch("/api/sessions", {
+      const res = await apiFetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

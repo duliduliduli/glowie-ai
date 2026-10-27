@@ -7,14 +7,16 @@ import { Flame, Link2, Loader2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import type { Roast } from "@/lib/ai";
-import { shareCard } from "../actions";
+import { shareCard, stopSharing } from "../actions";
+import { apiFetch } from "@/lib/api-fetch";
 
-type Item = { id: string; image: string; result: Roast };
+type Item = { id: string; image: string; result: Roast; shared: boolean };
 
 export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie: boolean; past: Item[] }) {
   const router = useRouter();
   const file = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [live, setLive] = useState<Set<string>>(() => new Set(past.filter((r) => r.shared).map((r) => r.id)));
 
   const go = async (f: File) => {
     try {
@@ -22,10 +24,10 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
       const form = new FormData();
       form.set("file", f);
       form.set("kind", "outfit");
-      const up = await fetch("/api/photos", { method: "POST", body: form }).then(async (r) => ({ ok: r.ok, data: await r.json() }));
+      const up = await apiFetch("/api/photos", { method: "POST", body: form }).then(async (r) => ({ ok: r.ok, data: await r.json() }));
       if (!up.ok) throw new Error(up.data.error);
       setBusy("Sharpening our wit...");
-      const res = await fetch("/api/roast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ photoId: up.data.id }) });
+      const res = await apiFetch("/api/roast", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ photoId: up.data.id }) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       router.refresh();
@@ -39,6 +41,7 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
 
   const share = async (id: string, asImage: boolean) => {
     const url = await shareCard("roast", id);
+    setLive((l) => new Set(l).add(id));
     if (asImage) {
       const blob = await fetch(`${url}/image`).then((r) => r.blob());
       const f = new File([blob], "glowie-roast.png", { type: "image/png" });
@@ -87,6 +90,12 @@ export function RoastFlow({ price, hasSelfie, past }: { price: number; hasSelfie
             <Button onClick={() => share(r.id, true)}><Share2 aria-hidden /> Share card</Button>
             <Button variant="secondary" onClick={() => share(r.id, false)}><Link2 aria-hidden /> Link</Button>
           </div>
+          {live.has(r.id) ? (
+            <div className="flex items-center justify-between gap-3 rounded-2xl bg-background p-3 text-sm">
+              <span>Your public link is on.</span>
+              <Button variant="secondary" size="sm" className="h-11" onClick={async () => { await stopSharing("roast", r.id); setLive((l) => { const n = new Set(l); n.delete(r.id); return n; }); toast.success("Link turned off"); }}>Stop sharing</Button>
+            </div>
+          ) : null}
         </article>
       ))}
     </div>

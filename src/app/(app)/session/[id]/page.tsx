@@ -22,11 +22,13 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
   const { id } = await params;
   const s = await db.styleSession.findFirst({ where: { id, userId: user.id }, include: { looks: { orderBy: { index: "asc" } } } });
   if (!s) notFound();
-  const [photos, image, parties] = await Promise.all([
+  const [photos, image, parties, links] = await Promise.all([
     db.photo.findMany({ where: { id: { in: [s.selfieId, s.fullBodyId].filter(Boolean) as string[] }, deletedAt: null } }),
     estimateCredits("image"),
     db.party.findMany({ where: { userId: user.id, revokedAt: null, lookAId: { in: s.looks.map((l) => l.id) } }, include: { votes: { select: { choice: true } } } }),
+    db.shareLink.findMany({ where: { userId: user.id, kind: "stylist", revokedAt: null, refId: { in: s.looks.map((l) => l.id) } }, select: { refId: true } }),
   ]);
+  const shared = new Set(links.map((l) => l.refId));
   const selfie = photos.find((p) => p.id === s.selfieId);
   const base = photos.find((p) => p.id === (s.fullBodyId ?? s.selfieId));
   const analysis = s.analysis as Analysis | null;
@@ -126,6 +128,7 @@ export default async function SessionPage({ params }: PageProps<"/session/[id]">
           selfie={selfie ? signedUrl(selfie.id) : null}
           preview={l.previewId ? signedUrl(l.previewId) : null}
           favorite={l.favorite}
+          shared={shared.has(l.id)}
           hair={{ status: l.hairStatus === "generating" && !live(l.updatedAt) ? "failed" : l.hairStatus, stages: ((l.hairStages as { label: string; photoId: string }[] | null) ?? []).map((st) => ({ label: st.label, url: signedUrl(st.photoId) })) }}
           video={{ status: l.videoStatus === "generating" && !live(l.updatedAt) ? "failed" : l.videoStatus, url: l.videoId ? signedUrl(l.videoId) : null }}
           prices={{ image, hair: image * 3, video: VIDEO.credits }}

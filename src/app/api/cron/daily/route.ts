@@ -12,7 +12,7 @@ async function deleteExpiredOriginals() {
   let deleted = 0;
   for (;;) {
     const batch = await db.photo.findMany({
-      where: { kind: { in: ["selfie", "fullbody"] }, deletedAt: null, createdAt: { lt: cutoff } },
+      where: { kind: { in: ["selfie", "fullbody", "outfit"] }, deletedAt: null, createdAt: { lt: cutoff } },
       select: { id: true, blobPath: true },
       take: 500,
     });

@@ -2,7 +2,8 @@ import "server-only";
 import { db } from "./db";
 import { ESTIMATE_BUFFER, IMAGE_ONLY_MODELS, MARKUP, CREDIT_USD, MODELS, VIDEO, type ModelRole } from "./config";
 
-const API = "https://openrouter.ai/api/v1";
+// Override only for local testing against a fake server.
+const API = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 const headers = () => ({
   Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
   "Content-Type": "application/json",

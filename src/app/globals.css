@@ -79,6 +79,8 @@
     @apply font-sans;
   }
 }
+html[data-cookie-banner] body { padding-bottom: 18rem; }
+
 @layer utilities {
   .pb-safe { padding-bottom: max(env(safe-area-inset-bottom), 0.75rem); }
   .pt-safe { padding-top: env(safe-area-inset-top); }
